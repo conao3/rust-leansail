@@ -1,0 +1,17 @@
+[package]
+name = "leansail"
+version = "0.1.0"
+edition = "2024"
+description = "A Lean language server with a Rust host and Lean-verified lifecycle rules"
+license = "Apache-2.0"
+repository = "https://github.com/conao3/rust-leansail"
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+leanfran = { version = "=0.6.0", default-features = false }
+libc = "0.2"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[build-dependencies]
+leanfran-build = "=0.6.0"

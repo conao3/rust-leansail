@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+host_binary="${LEANSAIL_TEST_BINARY:-$repo_dir/target/debug/leansail}"
+export LEANSAIL_BACKEND="${LEANSAIL_BACKEND:-$repo_dir/native/.lake/build/bin/leansail-backend}"
+if [[ "${1:-}" == "--version" ]]; then
+  exec "$host_binary" --version
+fi
+if [[ "${1:-}" != "--server" ]]; then
+  echo "Expected --server" >&2
+  exit 252
+fi
+shift
+exec "$host_binary" server run-server "$@"

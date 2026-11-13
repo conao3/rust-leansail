@@ -1,0 +1,7 @@
+name = "leansail-backend"
+defaultTargets = ["leansail-backend"]
+
+[[lean_exe]]
+name = "leansail-backend"
+root = "Main"
+supportInterpreter = true

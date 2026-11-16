@@ -47,6 +47,10 @@ def summarize(source):
         rounds = [r for s in sessions for r in s["rounds"]]
         entry = {
             "cold_open_complete": stats([s["cold_open_complete_ms"] for s in sessions]),
+            "warmup": {
+                method: stats([s["warmup_ms"][method] for s in sessions])
+                for method in ["textDocument/hover", "textDocument/completion"]
+            },
             "outside_cpu_cores": [
                 s["resources"]["outside_cpu_cores"] for s in sessions
             ],

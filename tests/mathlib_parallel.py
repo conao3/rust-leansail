@@ -114,6 +114,20 @@ def parallel_session(args, label, command, repetition):
         result["cold_open_complete_ms"] = (time.perf_counter_ns() - opened) / 1e6
         result["files"] = FILES
         active, *background = documents
+        result["warmup_ms"] = {}
+        for method in ["textDocument/hover", "textDocument/completion"]:
+            started = time.perf_counter_ns()
+            response = finish(
+                client.start(
+                    method,
+                    {
+                        "textDocument": {"uri": active["uri"]},
+                        "position": active["point"],
+                    },
+                )
+            )
+            assert response, (method, response)
+            result["warmup_ms"][method] = (time.perf_counter_ns() - started) / 1e6
         for sample in range(args.samples):
             phases = (
                 ["quiet", "busy"]

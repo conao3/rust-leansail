@@ -2,3 +2,4 @@
 /result
 /test-out/
 /native/.lake/
+/tests/__pycache__/

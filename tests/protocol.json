@@ -1,0 +1,300 @@
+{
+  "source": "https://github.com/leanprover/lean4/blob/v4.35.0/src/Lean/Server/ProtocolOverview.lean",
+  "entries": [
+    {
+      "kind": "notification",
+      "method": "$/cancelRequest",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "initialize",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "initialized",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "shutdown",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "exit",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "client/registerCapability",
+      "direction": "serverToClient"
+    },
+    {
+      "kind": "notification",
+      "method": "textDocument/didOpen",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "textDocument/didClose",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "textDocument/didChange",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "textDocument/didSave",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "workspace/didChangeWatchedFiles",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "textDocument/publishDiagnostics",
+      "direction": "serverToClient"
+    },
+    {
+      "kind": "notification",
+      "method": "$/lean/fileProgress",
+      "direction": "serverToClient"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/completion",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "completionItem/resolve",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/codeAction",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "codeAction/resolve",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/signatureHelp",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/hover",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/documentHighlight",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/documentSymbol",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/foldingRange",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/documentColor",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/semanticTokens/range",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/semanticTokens/full",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "workspace/semanticTokens/refresh",
+      "direction": "serverToClient"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/inlayHint",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "workspace/inlayHint/refresh",
+      "direction": "serverToClient"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/definition",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/declaration",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/typeDefinition",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/references",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/prepareCallHierarchy",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "callHierarchy/incomingCalls",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "callHierarchy/outgoingCalls",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/prepareModuleHierarchy",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/moduleHierarchy/imports",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/moduleHierarchy/importedBy",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/prepareRename",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/rename",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "workspace/symbol",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/plainGoal",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/plainTermGoal",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/waitForDiagnostics",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/waitForILeans",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/rpc/connect",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "$/lean/rpc/release",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "notification",
+      "method": "$/lean/rpc/keepAlive",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "request",
+      "method": "$/lean/rpc/call",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.getInteractiveDiagnostics",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.getInteractiveGoals",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.getInteractiveTermGoal",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.getWidgets",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.InteractiveDiagnostics.infoToInteractive",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.getGoToLocation",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.lazyTraceChildrenToInteractive",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.highlightMatches",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.getWidgetSource",
+      "direction": "clientToServer"
+    },
+    {
+      "kind": "rpcRequest",
+      "method": "Lean.Widget.InteractiveDiagnostics.msgToInteractive",
+      "direction": "clientToServer"
+    }
+  ]
+}

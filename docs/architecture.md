@@ -11,12 +11,7 @@ flowchart LR
 
 ## Implemented boundary
 
-The Rust host bounds frame headers to 64 KiB and bodies to 64 MiB, forwards
-accepted message bodies unchanged, and uses a bounded channel for transport.
-Malformed framing ends the session. EOF closes the backend's stdin; a backend
-that does not stop within five seconds is terminated. On Linux the backend
-receives a parent-death signal. The native watchdog retains upstream worker
-isolation and cleanup.
+Rust host は frame header を 64 KiB、本文を 64 MiB に制限し、通常の要求と現在の文書に対する応答を元の本文で転送する。transport は容量を制限した channel を使う。壊れた frame でセッションを終了し、クライアントの EOF で backend の標準入力を閉じる。5 秒以内に終了する backend を待ち、期限を超える場合はプロセスを終了する。Linux では backend に parent-death signal を設定する。native Watchdog がファイルごとの worker を隔離・管理する。
 
 Lifecycle transitions come from the embedded Lean model. It determines whether
 initialization, ordinary client requests, shutdown and exit are accepted.
@@ -35,6 +30,16 @@ The Lean backend builds highlighting indexes from completed snapshot streams.
 It retains one index per worker, keyed by document URI and version. Requests
 during incomplete elaboration and syntax-specific highlights use the upstream
 handler. This preserves the native Lean environment and metaprogram execution.
+
+## 要求の版と障害復旧
+
+`src/recovery.rs` は開いている文書の版と、その文書の open・変更ごとに増える内部の識別子を記録する。要求には受付時の識別子を関連付け、close 後の reopen も区別する。返答時の判定は Lean の `responseDecision` を使い、明示的にキャンセルされた要求には `-32800`、文書が変わった要求には `-32801` を返す。JSON の URI・ID の解釈と記録は Rust、キャンセル・版の一致から返答の扱いを決める規則と 3 件の定理は Lean が担う。
+
+現在の版に対する fatal な `$/lean/fileProgress` を受けたら、その文書を crash 状態として記録する。次の要求では Lean の `restartWorker` を呼ぶ。crash・open・request の条件を満たすと、host が同じ版に対する空文字の挿入を `didChange` として送り、その後に元の要求を送る。Watchdog は保有する文書から FileWorker を再起動する。判定を呼び出す経路と 3 件の定理を保持し、プロセスの操作とメッセージの配送を Rust で行う。
+
+Watchdog の接続が `exit` の前に終了した場合、保留中の要求に `-32603` と `window/showMessage` のエラー通知を送り、host は終了コード 255 で終了する。クライアントは言語サーバー全体を再起動して文書を開く。Watchdog 内の索引・保留要求・RPC session を含む状態をセッション単位で再構築するための境界である。
+
+Lean.Server の標準ライブラリのソース探索は実行ファイルからの相対パスを使う。開発用 backend の `.lake/build/src/lean` と Nix backend の `src/lean` は、同じ toolchain のソースを参照する。`lake env` が渡すプロジェクトの `LEAN_SRC_PATH` と併用する。type definition、module hierarchy、Widget の移動先も同じ探索先を使う。
 
 ## Using leanfran
 

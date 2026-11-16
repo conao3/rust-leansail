@@ -105,6 +105,10 @@ impl Gate {
         }
         Action::Forward
     }
+
+    pub fn exited(&self) -> bool {
+        matches!(self.phase, Phase::Exited)
+    }
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@ mod framing;
 mod gate;
 mod host;
 mod lifecycle;
+mod recovery;
 
 use std::path::PathBuf;
 

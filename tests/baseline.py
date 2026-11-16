@@ -2,12 +2,12 @@ import argparse
 import json
 import math
 import os
-import queue
 import statistics
 import subprocess
-import threading
 import time
 from pathlib import Path
+
+from client import Client
 
 
 def main():
@@ -29,7 +29,6 @@ def main():
         parser.error("--declarations and --edits must be nonnegative")
     if bool(args.touchstone) != bool(args.record_file):
         parser.error("--touchstone and --record-file must be supplied together")
-    messages = queue.Queue()
     env = dict(os.environ, LEAN_WORKER_PATH=args.lean)
     command = [args.lean, "--server", *args.server_arg]
     if args.touchstone:
@@ -44,80 +43,36 @@ def main():
             "--server-command-args",
             *command,
         ]
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-    )
-    errors = []
-
-    def read_messages():
-        try:
-            while True:
-                headers = {}
-                while (line := process.stdout.readline()) not in (b"\r\n", b"\n"):
-                    if not line:
-                        raise EOFError("server stdout closed")
-                    name, value = line.decode().split(":", 1)
-                    headers[name.lower()] = value.strip()
-                size = int(headers["content-length"])
-                data = bytearray()
-                while len(data) < size:
-                    chunk = process.stdout.read(size - len(data))
-                    if not chunk:
-                        raise EOFError("truncated LSP message")
-                    data.extend(chunk)
-                messages.put(json.loads(data))
-        except (EOFError, ValueError, KeyError, OSError) as error:
-            messages.put(error)
-
-    def read_errors():
-        for line in process.stderr:
-            errors.append(line.decode(errors="replace"))
-
-    reader = threading.Thread(target=read_messages, daemon=True)
-    stderr_reader = threading.Thread(target=read_errors, daemon=True)
-    reader.start()
-    stderr_reader.start()
-    request_id = 0
+    client = Client(command, env=env)
+    process = client.process
+    errors = client.errors
     notifications = {}
     diagnostics = []
 
     def send(message):
         if message.get("params") is None:
             message.pop("params", None)
-        data = json.dumps(dict(jsonrpc="2.0", **message), ensure_ascii=False).encode()
-        process.stdin.write(f"Content-Length: {len(data)}\r\n\r\n".encode() + data)
-        process.stdin.flush()
+        client.send(message)
 
     def request(method, params, expected_error=None):
-        nonlocal request_id
-        request_id += 1
-        current_id = request_id
         start = time.perf_counter_ns()
-        send({"id": current_id, "method": method, "params": params})
-        deadline = time.monotonic() + 30
-        while True:
-            message = messages.get(timeout=max(0, deadline - time.monotonic()))
-            if isinstance(message, Exception):
-                raise message
-            if "method" in message:
-                name = message["method"]
-                notifications[name] = notifications.get(name, 0) + 1
-                if name == "textDocument/publishDiagnostics":
-                    diagnostics.append(message["params"])
-                if "id" in message:
-                    send({"id": message["id"], "result": None})
-            elif message.get("id") == current_id:
-                if "error" in message:
-                    if message["error"]["code"] == expected_error:
-                        return message["error"], (time.perf_counter_ns() - start) / 1e6
-                    raise RuntimeError(f"{method}: {message['error']}")
-                if expected_error is not None:
-                    raise AssertionError(f"{method} unexpectedly succeeded")
-                return message.get("result"), (time.perf_counter_ns() - start) / 1e6
+        response = client.response(client.start(method, params))
+        notifications.clear()
+        diagnostics.clear()
+        for message in client.notifications + client.server_requests:
+            name = message["method"]
+            notifications[name] = notifications.get(name, 0) + 1
+            if name == "textDocument/publishDiagnostics":
+                diagnostics.append(message["params"])
+        if "error" in response:
+            if response["error"]["code"] != expected_error:
+                raise RuntimeError(f"{method}: {response['error']}")
+            result = response["error"]
+        else:
+            if expected_error is not None:
+                raise AssertionError(f"{method} が予期せず成功しました")
+            result = response.get("result")
+        return result, (time.perf_counter_ns() - start) / 1e6
 
     try:
         if args.lifecycle_check:
@@ -375,14 +330,7 @@ def main():
             )
         )
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
-        process.stdin.close()
-        process.stdout.close()
-        process.stderr.close()
-        reader.join(timeout=1)
-        stderr_reader.join(timeout=1)
+        client.close()
 
 
 if __name__ == "__main__":

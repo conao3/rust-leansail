@@ -32,6 +32,8 @@
             '';
             installPhase = ''
               install -Dm755 .lake/build/bin/leansail-backend $out/bin/leansail-backend
+              mkdir -p $out/src
+              ln -s ${pkgs.lean4}/src/lean $out/src/lean
             '';
           };
           host = pkgs.rustPlatform.buildRustPackage {
@@ -68,7 +70,8 @@
               pkgs.ruff
               inputs.leanfran.packages.${system}.rust-compiler
               inputs.touchstone.packages.${system}.default
-            ];
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.procps ];
             LEANFRAN_CLI = "${inputs.leanfran.packages.${system}.rust-compiler}/bin/leanfran";
             LEAN_SYSROOT = "${pkgs.lean4}";
           };

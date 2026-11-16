@@ -22,8 +22,9 @@ Lifecycle transitions come from the embedded Lean model. It determines whether
 initialization, ordinary client requests, shutdown and exit are accepted.
 Rust associates initialize and shutdown responses with their request IDs and
 applies the generated transitions. Unrelated responses cannot advance the gate.
-Ordinary server responses, notifications, extensions and widget RPC remain
-backend responsibilities.
+server からの要求は `initialize` で受け取った capability と照合する。`src/capabilities.rs` の Lean 定義が refresh の capability path、ファイル監視の動的登録の受付、転送・代理応答・拒否を決める。Rust は JSON を読み、登録の全 entry の判定を集約し、応答を元の要求の ID で backend へ返す。refresh の代理応答は `null`、未対応の動的登録の拒否は `-32601` である。対応済みの要求、通常の応答、通知、Lean 拡張と widget RPC は元の frame を転送する。
+
+capability の定理は refresh の転送に対応宣言が必要なこと、未対応の refresh が代理応答になること、監視の登録に動的登録への対応が必要なこと、登録の許可と拒否、対象外の要求の転送を検査する。JSON の解釈、transport と backend 自体の正しさは証明の範囲に含めず、Rust の単体テストと host を起動する通信テストで検査する。
 
 The model proves that ordinary requests require the running phase, that exit is
 accepted from every phase, that the exited state is terminal, and that entry to

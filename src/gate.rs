@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 
+use crate::capabilities::Capabilities;
 use crate::lifecycle::model::{self, Event, Phase};
 
 pub enum Action {
@@ -12,6 +13,7 @@ pub struct Gate {
     phase: Phase,
     initialize: Option<Value>,
     shutdown: Option<Value>,
+    capabilities: Capabilities,
 }
 
 impl Gate {
@@ -20,6 +22,7 @@ impl Gate {
             phase: Phase::Fresh,
             initialize: None,
             shutdown: None,
+            capabilities: Capabilities::new(Value::Null),
         }
     }
 
@@ -55,7 +58,11 @@ impl Gate {
                     "error":{"code":code, "message":"Request is not valid in the current lifecycle phase"}}));
             }
             match method {
-                "initialize" => self.initialize = Some(id.clone()),
+                "initialize" => {
+                    self.initialize = Some(id.clone());
+                    self.capabilities =
+                        Capabilities::new(message["params"]["capabilities"].clone());
+                }
                 "shutdown" => self.shutdown = Some(id.clone()),
                 _ => {}
             }
@@ -73,11 +80,13 @@ impl Gate {
         }
     }
 
-    pub fn server(&mut self, message: &Value) {
+    pub fn server(&mut self, message: &Value) -> Action {
         if message.get("method").is_some() {
-            return;
+            return self.capabilities.server(message);
         }
-        let Some(id) = message.get("id") else { return };
+        let Some(id) = message.get("id") else {
+            return Action::Forward;
+        };
         let success = message.get("error").is_none();
         if self.initialize.as_ref() == Some(id) {
             self.advance(if success {
@@ -94,6 +103,7 @@ impl Gate {
             });
             self.shutdown = None;
         }
+        Action::Forward
     }
 }
 

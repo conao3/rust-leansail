@@ -11,6 +11,7 @@ check: build
 	cargo clippy --all-targets -j 4 -- -D warnings
 	lake -d lean build
 	cargo test -j 4
+	timeout 30s python3 tests/capabilities.py
 	python3 tests/baseline.py --lean "$$(pwd)/tests/command" --output target/session.json --samples 2 --declarations 30 --edits 2 --regression --lifecycle-check
 
 .PHONY: check-protocol

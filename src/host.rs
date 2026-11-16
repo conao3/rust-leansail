@@ -126,8 +126,15 @@ pub fn run(path: &Path) -> io::Result<i32> {
             }
             Event::Server(body) => {
                 let message: Value = serde_json::from_slice(&body)?;
-                gate.server(&message);
-                framing::write(&mut stdout, &body)?;
+                match gate.server(&message) {
+                    Action::Forward => framing::write(&mut stdout, &body)?,
+                    Action::Drop => {}
+                    Action::Reply(reply) => {
+                        if let Some(input) = input.as_mut() {
+                            framing::write(input, &serde_json::to_vec(&reply)?)?;
+                        }
+                    }
+                }
             }
             Event::ClientClosed => {
                 input.take();

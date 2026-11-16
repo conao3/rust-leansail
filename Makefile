@@ -13,6 +13,7 @@ check: build
 	cargo test -j 4
 	timeout 30s python3 tests/capabilities.py
 	python3 tests/baseline.py --lean "$$(pwd)/tests/command" --output target/session.json --samples 2 --declarations 30 --edits 2 --regression --lifecycle-check
+	python3 tests/semantic_tokens.py
 	$(MAKE) check-acceptance
 	$(MAKE) check-editors
 
@@ -29,3 +30,8 @@ check-protocol: build
 .PHONY: check-editors
 check-editors: build
 	python3 tests/editors.py
+
+.PHONY: bench-mathlib
+bench-mathlib:
+	cargo build --release -j 4
+	python3 tests/mathlib.py $(BENCH_ARGS)

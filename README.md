@@ -108,8 +108,7 @@ end, {})
 - Rust handles LSP framing, process supervision and the client lifecycle gate.
 - `src/lifecycle.rs`・`src/capabilities.rs`・`src/recovery.rs` は、lifecycle・capability・旧応答の抑止・worker 復旧の判定規則と定理を Lean で定義する。leanfran が生成した Rust 関数を実際の転送経路で呼ぶ。
 - `native/Main.lean` embeds upstream `Lean.Server`, retaining its watchdog,
-  per-document workers, request handlers, widgets and RPC. It caches completed
-  document reference indexes for highlighting and invalidates them on edits.
+  per-document workers, request handlers, widgets and RPC. 解析済みの文書のハイライト索引と semantic tokens の応答を再利用する。索引の module 名は import の配列から直接取得し、上流との同値性を Lean で検査する。
 
 Rust currently supervises one native watchdog; upstream Lean still manages
 the per-document workers. Project-wide indexing, worker scheduling and resource
@@ -123,7 +122,7 @@ nix develop --command make check
 nix build
 ```
 
-`make check` は native backend と Rust host のビルド、format、Clippy、Lean の定理 16 件、Rust の単体テスト 9 件、capability の通信テスト 5 ケース、既存の 11 種類の要求と編集・UTF-16・複数ファイルの回帰検査を実行する。`make check-acceptance` では、同じ Lean 4.35.0 の `lean --server` と Leansail を起動し、上流の全 59 protocol entry、キャンセル、編集後の旧要求、実際のプロセスを kill する障害検査を実行する。`make check-editors` の実エディタ検査も含め、CI の `make check` で実行する。
+`make check` は native backend と Rust host のビルド、format、Clippy、leanfran の定理 16 件と native backend の同値性の定理 4 件、Rust の単体テスト 9 件、capability の通信テスト 5 ケース、既存の 11 種類の要求と編集・UTF-16・複数ファイルの回帰検査を実行する。semantic tokens は同一版の再要求、編集、再オープン、部分応答から完了後への移行を上流と比較する。`make check-acceptance` では、同じ Lean 4.35.0 の `lean --server` と Leansail を起動し、上流の全 59 protocol entry、キャンセル、編集後の旧要求、実際のプロセスを kill する障害検査を実行する。`make check-editors` の実エディタ検査も含め、CI の `make check` で実行する。
 
 ### 実エディタの比較検証
 
@@ -159,8 +158,7 @@ Leansail は lifecycle が `exit` を受理した後、元の frame を転送し
 主要要求の応答本文と、初期・連続入力後・修正後・再オープン後の最新版の診断本文を
 上流と照合する。編集中にキャンセルされる背景の semantic tokens・色・inlay hints は
 `-32800` または `-32801` を許容し、通知の回数と途中の到着順は比較対象から除く。
-検証対象は小さい Lean 文書と標準ライブラリを使う編集であり、Mathlib などの
-実用サイズのプロジェクトの性能と GUI 固有の表示は別途評価する。
+エディタの検証対象は小さい Lean 文書と標準ライブラリを使う編集である。Mathlib の性能は `make bench-mathlib` で計測する。[計測手順と条件](docs/mathlib-benchmark.md) を参照する。GUI 固有の表示は個別の確認対象となる。
 
 59 項目は要求 34 件、クライアント通知 10 件、server→client 要求 3 件、server 通知 2 件、Widget RPC 10 件。全項目の比較が成功する。RPC の不透明な ID を正規化し、通知は最終状態と要求の集合で比較する。解析途中の通知回数・到着順序・進捗範囲は実行時刻に依存するため比較対象から除く。比較方法と検査範囲は [受け入れ検証](docs/acceptance.md)、項目一覧は [tests/protocol.json](tests/protocol.json) が持つ。実行時にも固定 toolchain の `ProtocolOverview.lean` と一覧を照合する。
 

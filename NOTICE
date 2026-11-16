@@ -1,0 +1,3 @@
+native/Main.lean の参照の収集は Lean 4.35.0 の Lean/Server/References.lean に基づく。
+Copyright (c) 2021 Joscha Mennicken. All rights reserved.
+Apache License 2.0 に従って配布する。ライセンスの全文は LICENSE を参照。

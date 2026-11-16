@@ -28,10 +28,11 @@ accepted from every phase, that the exited state is terminal, and that entry to
 the running phase has an allowed predecessor. These are properties of this state
 machine, not a proof of the entire server or the LSP specification.
 
-The Lean backend builds highlighting indexes from completed snapshot streams.
-It retains one index per worker, keyed by document URI and version. Requests
-during incomplete elaboration and syntax-specific highlights use the upstream
-handler. This preserves the native Lean environment and metaprogram execution.
+Lean backend は完了した snapshot stream からハイライトの索引を作り、worker ごとに URI と文書の版に対応する 1 件を保持する。module 名は import の配列を直接参照する。4 件の定理で、直接参照、識別子、参照の収集、最終的な索引が上流の実装と等しいことを検査する。解析中と構文に固有のハイライトは上流の handler を使う。
+
+`semanticTokens/full` は完了した応答の直列化済みの本文を worker ごとに 1 件保持する。URI と版を照合して再利用し、編集時は世代を増やして破棄する。完了時に要求を開始した世代と照合するため、古い処理が編集後に cache を再登録することも防ぐ。部分応答、refresh、上流の stateful handler の順序は保持する。キャンセルは cache hit と構築完了の両方で検査する。
+
+これらは native Lean 内で完結する。Rust host は既存の leanfran 生成の規則を使う。Mathlib の比較計測とプロファイルの手順は [Mathlib の計測](mathlib-benchmark.md) が持つ。
 
 ## 要求の版と障害復旧
 

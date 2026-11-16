@@ -68,6 +68,8 @@
               pkgs.gnumake
               pkgs.python3
               pkgs.ruff
+              pkgs.emacs-nox
+              pkgs.neovim
               inputs.leanfran.packages.${system}.rust-compiler
               inputs.touchstone.packages.${system}.default
             ]
@@ -77,6 +79,7 @@
           };
           treefmt.programs.nixfmt.enable = true;
           treefmt.programs.rustfmt.enable = true;
+          treefmt.programs.stylua.enable = true;
         };
     };
 }

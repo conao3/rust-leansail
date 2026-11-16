@@ -27,6 +27,81 @@ target/debug/leansail server run-server \
   --backend "$PWD/native/.lake/build/bin/leansail-backend"
 ```
 
+## エディタの設定
+
+Emacs 31.1 / Eglot 1.24.31 と Neovim 0.12.6 の組み込み LSP で検証する。
+`leansail` を PATH に置き、Lean 4.35.0 のプロジェクトから起動する。
+依存ライブラリを使う場合は、以下のコマンドを
+`lake env leansail server run-server` にする。
+
+### Emacs / Eglot
+
+```elisp
+(require 'eglot)
+(define-derived-mode leansail-lean-mode prog-mode "Lean")
+(add-to-list 'auto-mode-alist '("\\.lean\\'" . leansail-lean-mode))
+(add-to-list 'eglot-server-programs
+             '(leansail-lean-mode . ("leansail" "server" "run-server")))
+(add-hook 'leansail-lean-mode-hook #'eglot-ensure)
+```
+
+Emacs 31 の Flymake は、ユーザーが `M-x customize-option RET trusted-content`
+で信頼したプロジェクトのファイルを診断する。検証スクリプトは自分で作った
+fixture のファイルだけを信頼する。診断一覧は `M-x flymake-show-buffer-diagnostics`、
+hover は ElDoc、定義ジャンプは `M-.`、補完は `C-M-i` を使う。
+
+lean4-mode を導入している場合は、上の `leansail-lean-mode` に対する Eglot の
+登録と hook を `lean4-mode` に設定する。検証スクリプトも `require` できれば
+lean4-mode を選ぶ。固定した nixpkgs と検証環境は上記の派生モードを使うため、
+lean4-mode 独自の infoview は別途確認する。
+
+ゴールは次のコマンドで表示できる。
+
+```elisp
+(defun leansail-show-goal ()
+  (interactive)
+  (let ((goal (jsonrpc-request (eglot-current-server) :$/lean/plainGoal
+                               (eglot--TextDocumentPositionParams))))
+    (with-help-window "*Lean goal*"
+      (princ (plist-get goal :rendered)))))
+```
+
+### Neovim / 組み込み LSP
+
+```lua
+vim.filetype.add({ extension = { lean = "lean" } })
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "lean",
+  callback = function()
+    vim.lsp.start({
+      name = "leansail",
+      cmd = { "leansail", "server", "run-server" },
+      root_dir = vim.fs.root(0, { "lakefile.toml", "lakefile.lean", "lean-toolchain", ".git" }),
+      exit_timeout = 10000,
+    })
+  end,
+})
+```
+
+`exit_timeout` はエディタ終了時に `shutdown` の応答と `exit` を待つ時間 (ms)。
+Neovim 0.12.6 の既定値 `false` は終了時の待機時間が 0 になる。
+診断一覧は `vim.diagnostic.setloclist()`、hover は `K`、定義ジャンプは
+`vim.lsp.buf.definition()`、補完は挿入モードの `C-x C-o` を使う。
+ゴールは次のコマンドで表示できる。
+
+```lua
+vim.api.nvim_create_user_command("LeanGoal", function()
+  local client = assert(vim.lsp.get_clients({ bufnr = 0, name = "leansail" })[1])
+  local params = vim.lsp.util.make_position_params(0, client.offset_encoding)
+  client:request("$/lean/plainGoal", params, function(err, result)
+    assert(not err, vim.inspect(err))
+    if result and result.rendered then
+      vim.lsp.util.open_floating_preview(vim.split(result.rendered, "\n"), "markdown", {})
+    end
+  end, 0)
+end, {})
+```
+
 ## What runs where
 
 - Rust handles LSP framing, process supervision and the client lifecycle gate.
@@ -47,7 +122,44 @@ nix develop --command make check
 nix build
 ```
 
-`make check` は native backend と Rust host のビルド、format、Clippy、Lean の定理 16 件、Rust の単体テスト 9 件、capability の通信テスト 5 ケース、既存の 11 種類の要求と編集・UTF-16・複数ファイルの回帰検査を実行する。`make check-acceptance` では、同じ Lean 4.35.0 の `lean --server` と Leansail を起動し、上流の全 59 protocol entry、キャンセル、編集後の旧要求、実際のプロセスを kill する障害検査を実行する。このターゲットは `make check` と CI に含まれる。
+`make check` は native backend と Rust host のビルド、format、Clippy、Lean の定理 16 件、Rust の単体テスト 9 件、capability の通信テスト 5 ケース、既存の 11 種類の要求と編集・UTF-16・複数ファイルの回帰検査を実行する。`make check-acceptance` では、同じ Lean 4.35.0 の `lean --server` と Leansail を起動し、上流の全 59 protocol entry、キャンセル、編集後の旧要求、実際のプロセスを kill する障害検査を実行する。`make check-editors` の実エディタ検査も含め、CI の `make check` で実行する。
+
+### 実エディタの比較検証
+
+```bash
+nix develop --command make check-editors
+LEANSAIL_TEST_BINARY="$PWD/result/bin/leansail" nix develop --command python3 tests/editors.py
+```
+
+Emacs は `--batch -Q`、Neovim は `--headless -u NONE` で個人設定から独立して起動する。
+開発環境に両エディタを固定し、各エディタで上流と Leansail の 2 セッションを実行する。
+単独検査は `python3 tests/editors.py --editor emacs` または `--editor neovim` を使う。
+
+| 操作 | Emacs / Eglot | Neovim / 組み込み LSP |
+|---|---|---|
+| 起動・初期化 | capability と応答本文が一致 | capability と応答本文が一致 |
+| 診断表示 | Flymake の一覧とエラー 2 件が一致 | location list とエラー 2 件が一致 |
+| hover | ElDoc の `editorValue : Nat` が一致 | フロートの `editorValue : Nat` が一致 |
+| 定義ジャンプ | xref が定義の行・列へ移動 | 組み込みの定義ジャンプが同じ位置へ移動 |
+| 補完 | CAPF の `succ` を含む候補が一致 | `C-x C-o` の `succ` を含む候補が一致 |
+| `$/lean/plainGoal` | `n : Nat ⊢ n = n` が一致 | 同じゴールが一致 |
+| 連続入力後の診断 | `false` の型エラーと、修正後のエラー 0 件が一致 | 同じ更新結果が一致 |
+| close・reopen | 同一サーバーで診断 2 件が復帰 | 同一サーバーで診断 2 件が復帰 |
+| shutdown・exit | Leansail は終了コード 0。上流は Eglot による強制終了 9 | 両方とも終了コード 0 |
+
+上流 Lean 4.35.0 は `shutdown` 後にパラメータを省略した `exit` を受理する。
+Eglot の `params: {}` 付き `exit` は待機を続け、Eglot が約 0.3 秒後に強制終了する。
+Leansail は lifecycle が `exit` を受理した後、元の frame を転送して backend の
+入力を閉じる。backend は EOF でも終了できるため、同じ Eglot の通知で正常終了する。
+`params` の省略・`{}`・`null` の 3 ケースも自動検査する。
+
+`target/editors/summary.json` が操作別の結果、各 `*.json` がエディタの表示内容、
+`*.ndjson` が透過 proxy による送受信の全文、`*.editor.log` と `*.server.log` がログを持つ。
+主要要求の応答本文と、初期・連続入力後・修正後・再オープン後の最新版の診断本文を
+上流と照合する。編集中にキャンセルされる背景の semantic tokens・色・inlay hints は
+`-32800` または `-32801` を許容し、通知の回数と途中の到着順は比較対象から除く。
+検証対象は小さい Lean 文書と標準ライブラリを使う編集であり、Mathlib などの
+実用サイズのプロジェクトの性能と GUI 固有の表示は別途評価する。
 
 59 項目は要求 34 件、クライアント通知 10 件、server→client 要求 3 件、server 通知 2 件、Widget RPC 10 件。全項目の比較が成功する。RPC の不透明な ID を正規化し、通知は最終状態と要求の集合で比較する。解析途中の通知回数・到着順序・進捗範囲は実行時刻に依存するため比較対象から除く。比較方法と検査範囲は [受け入れ検証](docs/acceptance.md)、項目一覧は [tests/protocol.json](tests/protocol.json) が持つ。実行時にも固定 toolchain の `ProtocolOverview.lean` と一覧を照合する。
 
@@ -83,7 +195,7 @@ lsp-touchstone check check-record \
   --record-file "$touchstone_run_dir/session.ndjson" --target both
 ```
 
-proxy の計測には検査器の負荷が含まれる。性能は直接接続して計測する。エディタとの手動接続と実用サイズのプロジェクトでの性能評価は、実通信の比較検査に加えて行う。
+proxy の計測には検査器の負荷が含まれる。性能は直接接続して計測する。実エディタの編集操作は `make check-editors`、実用サイズのプロジェクトでの性能は個別の計測で評価する。
 
 編集回帰を proxy で検査した場合も server・client のエラーは 0 件となる。次の警告は検査器の標準 LSP モデルとの違いを表す。件数は解析中の通知のタイミングに依存する。
 

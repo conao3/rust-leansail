@@ -14,6 +14,7 @@ check: build
 	timeout 30s python3 tests/capabilities.py
 	python3 tests/baseline.py --lean "$$(pwd)/tests/command" --output target/session.json --samples 2 --declarations 30 --edits 2 --regression --lifecycle-check
 	$(MAKE) check-acceptance
+	$(MAKE) check-editors
 
 .PHONY: check-acceptance
 check-acceptance: build
@@ -24,3 +25,7 @@ check-acceptance: build
 check-protocol: build
 	mkdir -p test-out
 	lsp-touchstone check check-server --record-file test-out/strict.ndjson --open-file native/Main.lean --language-id lean4 --server-command-args target/debug/leansail server run-server --backend "$$(pwd)/native/.lake/build/bin/leansail-backend"
+
+.PHONY: check-editors
+check-editors: build
+	python3 tests/editors.py

@@ -152,6 +152,10 @@ pub fn run(path: &Path) -> io::Result<i32> {
                         framing::write(&mut stdout, &serde_json::to_vec(&reply)?)?
                     }
                 }
+                if gate.exited() {
+                    input.take();
+                    closed = Some(Instant::now());
+                }
             }
             Event::Server(body) => {
                 let message: Value = serde_json::from_slice(&body)?;

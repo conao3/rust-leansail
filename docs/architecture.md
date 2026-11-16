@@ -13,6 +13,8 @@ flowchart LR
 
 Rust host は frame header を 64 KiB、本文を 64 MiB に制限し、通常の要求と現在の文書に対する応答を元の本文で転送する。transport は容量を制限した channel を使う。壊れた frame でセッションを終了し、クライアントの EOF で backend の標準入力を閉じる。5 秒以内に終了する backend を待ち、期限を超える場合はプロセスを終了する。Linux では backend に parent-death signal を設定する。native Watchdog がファイルごとの worker を隔離・管理する。
 
+lifecycle が `exit` を受理したときは、元の frame を転送した後に backend の標準入力を閉じる。Lean 4.35.0 の Watchdog は `shutdown` 後の `params: {}` 付き `exit` を待機終了の条件に含めず、EOF で終了する。Eglot が送るこの形式でも backend と host を正常終了させる。
+
 Lifecycle transitions come from the embedded Lean model. It determines whether
 initialization, ordinary client requests, shutdown and exit are accepted.
 Rust associates initialize and shutdown responses with their request IDs and

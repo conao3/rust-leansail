@@ -43,6 +43,7 @@ Emacs 31.1 / Eglot 1.24.31 と Neovim 0.12.6 の組み込み LSP で検証する
 (add-to-list 'eglot-server-programs
              '(leansail-lean-mode . ("leansail" "server" "run-server")))
 (add-hook 'leansail-lean-mode-hook #'eglot-ensure)
+(add-hook 'kill-emacs-hook #'eglot-shutdown-all)
 ```
 
 Emacs 31 の Flymake は、ユーザーが `M-x customize-option RET trusted-content`

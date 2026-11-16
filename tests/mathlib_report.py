@@ -5,12 +5,15 @@ from pathlib import Path
 from mathlib import FILES, METHODS, stats
 
 
-def summarize(source, server):
+def summarize(source, server, allow_incomplete=False):
     sessions = [
         s for s in source["sessions"] if s["server"] == server and s["accepted"]
     ]
-    assert len(sessions) == source["repetitions"], "成功した反復が揃っていません"
+    if not allow_incomplete:
+        assert len(sessions) == source["repetitions"], "成功した反復が揃っていません"
     assert len({s["repetition"] for s in sessions}) == len(sessions)
+    if not sessions:
+        return None
     result = {
         "startup": stats([s["startup_first_diagnostic_ms"] for s in sessions]),
         "initialize": stats([s["initialize_ms"] for s in sessions]),
@@ -76,15 +79,30 @@ def main():
         required=True,
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
     series = {}
     inputs = {}
+    counts = {}
     for name, server, path in args.series:
+        if args.allow_incomplete and not Path(path).exists():
+            series[name] = None
+            inputs[name] = {"status": "未計測"}
+            counts[name] = {"accepted": 0, "rejected": 0}
+            continue
         source = json.loads(Path(path).read_text())
         assert not source["perf"] and not source["profile"], (
             "プロファイルの標本は通常計測と分けてください"
         )
-        series[name] = summarize(source, server)
+        series[name] = summarize(source, server, args.allow_incomplete)
+        counts[name] = {
+            "accepted": sum(
+                s["server"] == server and s["accepted"] for s in source["sessions"]
+            ),
+            "rejected": sum(
+                s["server"] == server and not s["accepted"] for s in source["sessions"]
+            ),
+        }
         inputs[name] = {
             key: source[key]
             for key in [
@@ -109,16 +127,27 @@ def main():
         "max_outside_cores",
         "host_sha256",
     ]:
-        assert len({metadata[key] for metadata in inputs.values()}) == 1, key
+        assert (
+            len({metadata[key] for metadata in inputs.values() if key in metadata}) == 1
+        ), key
     for relative in FILES:
         for method in METHODS:
             hashes = {
                 h[method]
                 for s in series.values()
+                if s is not None
                 for h in s["files"][relative]["response_hashes"]
             }
             assert len(hashes) == 1, (relative, method, "初回の応答が一致しません")
-    output = {"inputs": inputs, "series": series, "response_parity": True}
+    output = {
+        "inputs": inputs,
+        "counts": counts,
+        "series": series,
+        "response_parity": True,
+        "response_parity_scope": [
+            name for name, data in series.items() if data is not None
+        ],
+    }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n")
 
@@ -131,24 +160,32 @@ def main():
             "| "
             + label
             + " | "
-            + " | ".join(f"{v['median_ms']:.3f} / {v['p95_ms']:.3f}" for v in values)
+            + " | ".join(
+                f"{v['median_ms']:.3f} / {v['p95_ms']:.3f}"
+                if v is not None
+                else "未計測"
+                for v in values
+            )
             + " |"
         )
 
     header()
-    row("起動から最初の診断", [s["startup"] for s in series.values()])
+    row("起動から最初の診断", [s["startup"] if s else None for s in series.values()])
     for relative in FILES:
         print(f"\n{relative}\n")
         header()
         row(
             "open から解析完了",
-            [s["files"][relative]["open_complete"] for s in series.values()],
+            [
+                s["files"][relative]["open_complete"] if s else None
+                for s in series.values()
+            ],
         )
         for method in METHODS:
             row(
                 method,
                 [
-                    s["files"][relative]["requests"][method]["warm"]
+                    s["files"][relative]["requests"][method]["warm"] if s else None
                     for s in series.values()
                 ],
             )
@@ -158,13 +195,18 @@ def main():
                 s["files"][relative]["requests"]["textDocument/documentHighlight"][
                     "first"
                 ]
+                if s
+                else None
                 for s in series.values()
             ],
         )
         for kind in ["tail", "early"]:
             row(
                 f"編集 {kind}",
-                [s["files"][relative]["edits"][kind] for s in series.values()],
+                [
+                    s["files"][relative]["edits"][kind] if s else None
+                    for s in series.values()
+                ],
             )
 
 

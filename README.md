@@ -115,6 +115,21 @@ the per-document workers. Project-wide indexing, worker scheduling and resource
 budgets are subsequent architecture work. [Architecture](docs/architecture.md)
 describes these boundaries and the role of leanfran.
 
+## Mathlib の計測
+
+`make bench-mathlib` は公式 Lean 4.35.0 と Mathlib 全体のキャッシュを使い、実ファイル 3 本の起動、7 種類の要求、編集、プロセス別 RSS を測る。[手順と全表](docs/mathlib-benchmark.md)、[標本と集計](docs/mathlib-results.json) を参照する。
+
+採用したセッションは素の Lean が 3 回、改善前 Leansail が 2 回、改善後が 0 回。負荷で除外した完走は計 6 回、開始前の見送りは計 21 回である。改善後の性能と改善率は **未計測**。以下は大きい積分ファイルの中央値 / p95 (ms) で、改善前の構成には文書版ごとのハイライト索引の再利用を含む。
+
+| 対象                 |           素の Lean |     改善前 Leansail | 改善後 Leansail |
+| -------------------- | ------------------: | ------------------: | --------------: |
+| 起動から最初の診断   | 7064.298 / 7212.888 | 7932.438 / 8659.311 |          未計測 |
+| ハイライト初回       |   699.074 / 717.132 |   718.965 / 740.277 |          未計測 |
+| ハイライト反復       |   676.456 / 722.644 |       0.957 / 3.264 |          未計測 |
+| semantic tokens 反復 |     75.746 / 88.765 |     75.584 / 77.486 |          未計測 |
+
+Lean 側の改善はハイライトの import 全走査の削減と、完了した semantic tokens の応答再利用。4 件の同値性の定理、全 59 項目、実エディタ、Nix 配布物の検査で機能を確かめる。CPU プロファイルでは Rust host は約 0.15%、主な費用は Lean の elaboration、参照抽出、Watchdog の索引にある。
+
 ## Verify
 
 ```bash
@@ -135,17 +150,17 @@ Emacs は `--batch -Q`、Neovim は `--headless -u NONE` で個人設定から�
 開発環境に両エディタを固定し、各エディタで上流と Leansail の 2 セッションを実行する。
 単独検査は `python3 tests/editors.py --editor emacs` または `--editor neovim` を使う。
 
-| 操作 | Emacs / Eglot | Neovim / 組み込み LSP |
-|---|---|---|
-| 起動・初期化 | capability と応答本文が一致 | capability と応答本文が一致 |
-| 診断表示 | Flymake の一覧とエラー 2 件が一致 | location list とエラー 2 件が一致 |
-| hover | ElDoc の `editorValue : Nat` が一致 | フロートの `editorValue : Nat` が一致 |
-| 定義ジャンプ | xref が定義の行・列へ移動 | 組み込みの定義ジャンプが同じ位置へ移動 |
-| 補完 | CAPF の `succ` を含む候補が一致 | `C-x C-o` の `succ` を含む候補が一致 |
-| `$/lean/plainGoal` | `n : Nat ⊢ n = n` が一致 | 同じゴールが一致 |
-| 連続入力後の診断 | `false` の型エラーと、修正後のエラー 0 件が一致 | 同じ更新結果が一致 |
-| close・reopen | 同一サーバーで診断 2 件が復帰 | 同一サーバーで診断 2 件が復帰 |
-| shutdown・exit | Leansail は終了コード 0。上流は Eglot による強制終了 9 | 両方とも終了コード 0 |
+| 操作               | Emacs / Eglot                                          | Neovim / 組み込み LSP                  |
+| ------------------ | ------------------------------------------------------ | -------------------------------------- |
+| 起動・初期化       | capability と応答本文が一致                            | capability と応答本文が一致            |
+| 診断表示           | Flymake の一覧とエラー 2 件が一致                      | location list とエラー 2 件が一致      |
+| hover              | ElDoc の `editorValue : Nat` が一致                    | フロートの `editorValue : Nat` が一致  |
+| 定義ジャンプ       | xref が定義の行・列へ移動                              | 組み込みの定義ジャンプが同じ位置へ移動 |
+| 補完               | CAPF の `succ` を含む候補が一致                        | `C-x C-o` の `succ` を含む候補が一致   |
+| `$/lean/plainGoal` | `n : Nat ⊢ n = n` が一致                               | 同じゴールが一致                       |
+| 連続入力後の診断   | `false` の型エラーと、修正後のエラー 0 件が一致        | 同じ更新結果が一致                     |
+| close・reopen      | 同一サーバーで診断 2 件が復帰                          | 同一サーバーで診断 2 件が復帰          |
+| shutdown・exit     | Leansail は終了コード 0。上流は Eglot による強制終了 9 | 両方とも終了コード 0                   |
 
 上流 Lean 4.35.0 は `shutdown` 後にパラメータを省略した `exit` を受理する。
 Eglot の `params: {}` 付き `exit` は待機を続け、Eglot が約 0.3 秒後に強制終了する。
@@ -198,10 +213,10 @@ proxy の計測には検査器の負荷が含まれる。性能は直接接続�
 
 編集回帰を proxy で検査した場合も server・client のエラーは 0 件となる。次の警告は検査器の標準 LSP モデルとの違いを表す。件数は解析中の通知のタイミングに依存する。
 
-| 側 | 指摘 | 理由 |
-|---|---|---|
+| 側     | 指摘                                                                    | 理由                                                                                                                                                                                  |
+| ------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | server | `capability/client-did-not-declare` (`textDocument/publishDiagnostics`) | 検査クライアントは空の capability を送る。LSP の `publishDiagnostics` capability は診断の関連情報や版などの追加機能を表し、基本の push diagnostics を受け取るための opt-in ではない。 |
-| server | `types/unknown-property` (`Diagnostic.fullRange`) | Lean の診断拡張。Lean のクライアントとの互換性のため転送する。 |
-| client | `types/unknown-method` (`textDocument/waitForDiagnostics`) | 検証クライアントが解析の完了を待つために使う Lean 拡張。 |
+| server | `types/unknown-property` (`Diagnostic.fullRange`)                       | Lean の診断拡張。Lean のクライアントとの互換性のため転送する。                                                                                                                        |
+| client | `types/unknown-method` (`textDocument/waitForDiagnostics`)              | 検証クライアントが解析の完了を待つために使う Lean 拡張。                                                                                                                              |
 
 capability の意味と refresh 応答は [LSP semantic tokens](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokens_refreshRequest)、[inlay hints](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_inlayHint_refresh)、[ファイル監視](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_didChangeWatchedFiles)、[診断通知](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_publishDiagnostics) に従う。

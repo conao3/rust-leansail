@@ -39,7 +39,6 @@ def change(client, text, version):
     client.notify(
         "textDocument/didChange",
         {
-            **DOC,
             "textDocument": {"uri": URI, "version": version},
             "contentChanges": [{"text": text}],
         },
@@ -95,9 +94,10 @@ def main():
     environment = dict(os.environ)
     environment.pop("LEAN_WORKER_PATH", None)
     upstream = check([shutil.which("lean"), "--server"], environment)
-    leansail = check(
-        [str(binary), "server", "run-server", "--backend", str(backend)], environment
-    )
+    command = [str(binary), "server", "run-server"]
+    if "LEANSAIL_TEST_BINARY" not in os.environ:
+        command.extend(["--backend", str(backend)])
+    leansail = check(command, environment)
     for key in ["original", "edited", "complete"]:
         assert upstream[key] == leansail[key], key
     output = ROOT / "target/semantic-tokens.json"

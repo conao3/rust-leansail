@@ -133,11 +133,15 @@ def outside_cpu(before, after, exclude, seconds):
 
 
 class Monitor:
-    def __init__(self, pid):
+    def __init__(self, pid, pss=False):
         self.pid = pid
+        self.pss = pss
         self.stop = threading.Event()
         self.peaks = {}
         self.total_peak_kib = 0
+        self.total_peak_pss_kib = 0
+        self.pss_samples = []
+        self.error = None
         self.outside_ticks = 0
         self.before = processes()
         self.started = time.monotonic()
@@ -145,6 +149,13 @@ class Monitor:
         self.thread.start()
 
     def sample(self):
+        try:
+            self.sample_loop()
+        except Exception as error:
+            self.error = repr(error)
+            raise
+
+    def sample_loop(self):
         before = self.before
         while not self.stop.wait(0.1):
             table = processes()
@@ -155,6 +166,8 @@ class Monitor:
                 if pid in before and pid not in owned and pid != os.getpid()
             )
             total = 0
+            total_pss = 0
+            sample_pss = {}
             for pid in owned & table.keys():
                 p = table[pid]
                 total += p["rss_kib"]
@@ -174,7 +187,37 @@ class Monitor:
                     self.peaks[pid]["peak_rss_kib"], p["rss_kib"]
                 )
                 self.peaks[pid]["cpu_ticks"] = p["ticks"]
+                if self.pss:
+                    try:
+                        fields = (
+                            Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines()
+                        )
+                    except ProcessLookupError:
+                        continue
+                    except FileNotFoundError:
+                        continue
+                    pss = int(
+                        next(
+                            line.split()[1]
+                            for line in fields
+                            if line.startswith("Pss:")
+                        )
+                    )
+                    sample_pss[str(pid)] = pss
+                    total_pss += pss
+                    self.peaks[pid]["peak_pss_kib"] = max(
+                        self.peaks[pid].get("peak_pss_kib", 0), pss
+                    )
             self.total_peak_kib = max(self.total_peak_kib, total)
+            if self.pss:
+                self.total_peak_pss_kib = max(self.total_peak_pss_kib, total_pss)
+                self.pss_samples.append(
+                    {
+                        "elapsed_s": time.monotonic() - self.started,
+                        "process_pss_kib": sample_pss,
+                        "total_pss_kib": total_pss,
+                    }
+                )
             before = table
 
     def finish(self):
@@ -182,8 +225,17 @@ class Monitor:
         self.thread.join()
         return {
             "sample_interval_ms": 100,
+            "sampling_error": self.error,
             "processes": list(self.peaks.values()),
             "simultaneous_peak_rss_kib": self.total_peak_kib,
+            **(
+                {
+                    "simultaneous_peak_pss_kib": self.total_peak_pss_kib,
+                    "pss_samples": self.pss_samples,
+                }
+                if self.pss
+                else {}
+            ),
             "outside_cpu_cores": self.outside_ticks
             / os.sysconf("SC_CLK_TCK")
             / (time.monotonic() - self.started),
@@ -400,13 +452,14 @@ def session(args, label, command, repetition):
                 f"{args.output.stem}-{label}-{repetition}-failure.json"
             )
             failure.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    assert not result["resources"]["sampling_error"], result["resources"]
     result["accepted"] = (
         result["resources"]["outside_cpu_cores"] <= args.max_outside_cores
     )
     return result
 
 
-def main():
+def main(session_runner=session):
     parser = argparse.ArgumentParser(
         description="Mathlib の実ファイルを用いた LSP 比較計測"
     )
@@ -423,17 +476,31 @@ def main():
     parser.add_argument("--edits", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=600)
     parser.add_argument("--max-outside-cores", type=float, default=0.75)
+    parser.add_argument("--wait-idle", action="store_true")
+    parser.add_argument("--retry-delay", type=float, default=30)
+    parser.add_argument("--max-attempts", type=int, default=200)
     parser.add_argument(
-        "--server", choices=["upstream", "leansail", "native"], action="append"
+        "--server",
+        choices=["upstream", "leansail", "before", "native"],
+        action="append",
     )
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--perf", action="store_true")
     parser.add_argument("--host", type=Path, default=ROOT / "target/release/leansail")
     parser.add_argument("--backend", type=Path)
+    parser.add_argument("--before-backend", type=Path)
     args = parser.parse_args()
+    if session_runner != session and (args.profile or args.perf):
+        parser.error("並列シナリオは通常計測として実行してください")
     args.workspace = args.workspace.resolve()
     args.output = args.output.resolve()
     args.host = args.host.resolve()
+    if args.before_backend:
+        args.before_backend = args.before_backend.resolve()
+    if args.server and "before" in args.server and not args.before_backend:
+        parser.error("before の計測には --before-backend が必要です")
+    if args.retry_delay <= 0 or args.max_attempts < 1:
+        parser.error("再試行の間隔と上限は正数にしてください")
     if args.toolchain:
         args.toolchain = args.toolchain.resolve()
         os.environ["PATH"] = (
@@ -488,20 +555,37 @@ def main():
         ],
         "native": [str(args.backend), "--server"],
     }
+    if args.before_backend:
+        commands["before"] = [
+            str(args.host),
+            "server",
+            "run-server",
+            "--backend",
+            str(args.before_backend),
+        ]
     output = {
         "mathlib_revision": REVISION,
         "samples": args.samples,
         "repetitions": args.repetitions,
         "edits": args.edits,
         "cpu_count": os.cpu_count(),
+        "machine": {"hostname": platform.node(), "platform": platform.platform()},
+        "scenario": session_runner.__module__ + "." + session_runner.__name__,
         "loadavg": os.getloadavg(),
         "profile": args.profile,
         "perf": args.perf,
         "host_sha256": hashlib.sha256(args.host.read_bytes()).hexdigest(),
         "backend_sha256": hashlib.sha256(args.backend.read_bytes()).hexdigest(),
+        "before_backend_sha256": hashlib.sha256(
+            args.before_backend.read_bytes()
+        ).hexdigest()
+        if args.before_backend
+        else None,
         "lean_git_hash": lean_hash,
         "max_outside_cores": args.max_outside_cores,
         "sessions": [],
+        "preflight_skips": [],
+        "interrupted_sessions": [],
     }
     if args.resume and args.output.exists():
         previous = json.loads(args.output.read_text())
@@ -515,6 +599,10 @@ def main():
             "host_sha256",
             "backend_sha256",
             "max_outside_cores",
+            "machine",
+            "cpu_count",
+            "scenario",
+            "before_backend_sha256",
         ]:
             if previous[key] != output[key]:
                 raise ValueError(f"再開時の設定が一致しません: {key}")
@@ -527,17 +615,6 @@ def main():
                 for s in output["sessions"]
             ):
                 continue
-            before = processes()
-            start = time.monotonic()
-            time.sleep(2)
-            after = processes()
-            idle_cores = outside_cpu(
-                before, after, {os.getpid()}, time.monotonic() - start
-            )
-            if idle_cores > args.max_outside_cores:
-                raise RuntimeError(
-                    f"他プロセスの負荷 {idle_cores:.2f} cores が上限 {args.max_outside_cores} を超えています"
-                )
             command = commands[label]
             if args.perf:
                 command = [
@@ -554,15 +631,54 @@ def main():
                     "--",
                     *command,
                 ]
-            measured = session(args, label, command, repetition)
-            output["sessions"].append(measured)
-            args.output.write_text(
-                json.dumps(output, ensure_ascii=False, indent=2) + "\n"
-            )
-            if not measured["accepted"]:
-                raise RuntimeError(
-                    "計測中の他プロセスの負荷が上限を超えました。この回を再計測してください"
+            for attempt in range(args.max_attempts):
+                before = processes()
+                start = time.monotonic()
+                time.sleep(2)
+                after = processes()
+                idle_cores = outside_cpu(
+                    before, after, {os.getpid()}, time.monotonic() - start
                 )
+                if idle_cores > args.max_outside_cores:
+                    output["preflight_skips"].append(
+                        {
+                            "server": label,
+                            "repetition": repetition,
+                            "outside_cpu_cores": idle_cores,
+                        }
+                    )
+                    measured = None
+                else:
+                    try:
+                        measured = session_runner(args, label, command, repetition)
+                    except KeyboardInterrupt:
+                        output["interrupted_sessions"].append(
+                            {
+                                "server": label,
+                                "repetition": repetition,
+                                "reason": "操作による中断",
+                            }
+                        )
+                        args.output.write_text(
+                            json.dumps(output, ensure_ascii=False, indent=2) + "\n"
+                        )
+                        raise
+                    output["sessions"].append(measured)
+                args.output.write_text(
+                    json.dumps(output, ensure_ascii=False, indent=2) + "\n"
+                )
+                if measured and measured["accepted"]:
+                    print(f"{label} {repetition}: 採用", flush=True)
+                    break
+                if not args.wait_idle or attempt + 1 == args.max_attempts:
+                    raise RuntimeError(
+                        "外部負荷が上限を超えました。--resume で再開できます"
+                    )
+                print(
+                    f"{label} {repetition}: 負荷のため {args.retry_delay} 秒後に再試行",
+                    flush=True,
+                )
+                time.sleep(args.retry_delay)
 
 
 if __name__ == "__main__":

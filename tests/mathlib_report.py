@@ -102,6 +102,12 @@ def main():
             "rejected": sum(
                 s["server"] == server and not s["accepted"] for s in source["sessions"]
             ),
+            "preflight_skips": sum(
+                s["server"] == server for s in source["preflight_skips"]
+            ),
+            "interrupted": sum(
+                s["server"] == server for s in source["interrupted_sessions"]
+            ),
         }
         inputs[name] = {
             key: source[key]
@@ -115,8 +121,12 @@ def main():
                 "max_outside_cores",
                 "host_sha256",
                 "backend_sha256",
+                "machine",
+                "scenario",
             ]
         }
+        if server == "before":
+            inputs[name]["backend_sha256"] = source["before_backend_sha256"]
     for key in [
         "mathlib_revision",
         "lean_git_hash",
@@ -126,10 +136,21 @@ def main():
         "cpu_count",
         "max_outside_cores",
         "host_sha256",
+        "scenario",
     ]:
         assert (
             len({metadata[key] for metadata in inputs.values() if key in metadata}) == 1
         ), key
+    assert (
+        len(
+            {
+                json.dumps(metadata["machine"], sort_keys=True)
+                for metadata in inputs.values()
+                if "machine" in metadata
+            }
+        )
+        == 1
+    ), "異なるホストの標本は混ぜられません"
     for relative in FILES:
         for method in METHODS:
             hashes = {

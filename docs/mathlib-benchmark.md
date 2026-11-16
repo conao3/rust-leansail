@@ -10,7 +10,7 @@ Linux と公式 Lean 4.35.0 の toolchain を使う。Mathlib は v4.35.0 の co
 elan toolchain install leanprover/lean4:v4.35.0
 toolchain_prefix="$(elan run leanprover/lean4:v4.35.0 lean --print-prefix)"
 nix develop --command make bench-mathlib \
-  BENCH_ARGS="--prepare --toolchain $toolchain_prefix --output target/mathlib-results.json"
+  BENCH_ARGS="--prepare --toolchain $toolchain_prefix --samples 10 --repetitions 5 --edits 2 --wait-idle --output target/mathlib-results.json"
 ```
 
 `--prepare` は小さい Lake プロジェクトを作り、固定した Mathlib を依存に加える。[Mathlib の cache コマンド](https://github.com/leanprover-community/mathlib4/blob/v4.35.0/Cache/README.md) の `lake exe cache get` で Mathlib 全体とその依存を取得し、import の検査と対象ごとの `lake setup-file` を済ませる。`--prepare-only` はここまでを実行する。以降は `--prepare` を省略して同じ workspace を再利用する。計測環境は約 7.3 GiB、プロジェクトと依存の `.ilean` は 9,049 本である。
@@ -40,6 +40,25 @@ native backend のソースは `native/` から `target/mathlib-backend/` にコ
 Linux の `/proc` を 100 ms 間隔で読み、host、Watchdog、FileWorker、Lake の準備プロセスを区別する。プロセスごとの RSS 最大値と、同時点で合算した RSS の最大値を保存する。RSS には共有ページもプロセスごとに含まれるため、合算は物理メモリの専有量とは異なる。
 
 開始前の 2 秒間とセッション中に他プロセスの CPU 使用量を検査する。既定の上限は 0.75 cores。上限を超えた回は `accepted: false` として保存し、`--resume` で成功済みの回を再利用しながら再計測できる。プロファイルの回は通常の性能表と分ける。
+
+`--wait-idle` は負荷による見送りと除外の後に自動で再試行する。間隔は `--retry-delay` (既定 30 秒)、各条件・各反復の試行上限は `--max-attempts` (既定 200 回) で指定する。機能上の失敗はエラーとして停止する。開始前の見送りもサーバー別に JSON に保存する。再開時はホスト、シナリオ、実行ファイルの hash、標本数と負荷基準を照合し、集計時にも異なるホストの標本を拒否する。
+
+改善前の保存済み backend は `--before-backend` で指定する。`--server upstream --server before --server leansail` を併用すると、3 条件を反復ごとに交互に実行する。改善前のソースは `git show 1fa2f5a:native/Main.lean` と `git show 1fa2f5a:native/lakefile.toml` から取得し、同じ公式 toolchain で `lake build` する。実行ファイルの `../src/lean` をその toolchain のソースへ向ける。保存した実行ファイルと比較対象の hash は結果 JSON に含む。
+
+## 並列解析と PSS
+
+```bash
+nix develop --command make bench-mathlib-parallel \
+  BENCH_ARGS="--toolchain $toolchain_prefix --samples 10 --repetitions 5 --edits 2 --wait-idle --resume --output target/mathlib-parallel.json"
+nix develop --command python3 tests/mathlib_parallel_report.py \
+  target/mathlib-parallel.json --output target/mathlib-parallel-summary.json
+```
+
+同じ 3 文書を待機を挟まずに開き、全体の解析完了時間を記録する。積分の文書を編集中の文書にし、全 3 文書を開いたまま `quiet` と `busy` の 2 条件を交互に測る。`quiet` は背景文書の解析完了後、`busy` は有限次元空間と Tactic の `early` への編集を通知した直後に開始する。背景の編集は空白の挿入と削除を交互に行う。
+
+各操作では積分の `tail` を編集し、hover、補完、最新版の `waitForDiagnostics` を同時に要求する。時間は編集通知から各応答の受信までで、前景文書の再解析の待ち時間も含む。最新版の診断通知の最終受信時刻を別に保存する。要求の応答本文、診断の版とエラーの有無を検査する。前景操作の完了時にも背景の解析完了応答を受信していなかった文書数を記録し、実際に並行していた標本を確認する。各セッションで各条件 10 回、各構成 5 セッションなら各条件 50 標本になる。
+
+Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子プロセスについて採取する。採取の間には 100 ms の待機を入れ、各標本の経過時間・プロセス別 PSS・合計 PSS を保持する。共有ページは PSS の割合で数える。プロセス別の最大値の合算と、同じ標本内の合計の最大値を区別する。全操作の完了後の PSS も記録する。採取の例外は計測を失敗にする。通常の逐次シナリオは RSS のみを採取し、PSS の読み取り費用を含めない。
 
 ## 計測結果
 
@@ -157,10 +176,10 @@ native Lean の `textDocument/semanticTokens/full` は、完了した文書の�
 ## 結果の集計
 
 ```bash
-nix develop --command python3 tests/mathlib_report.py --allow-incomplete \
-  --series 素のLean upstream target/mathlib-before.json \
-  --series 改善前 leansail target/mathlib-before.json \
-  --series 改善後 leansail target/mathlib-after.json \
+nix develop --command python3 tests/mathlib_report.py \
+  --series 素のLean upstream target/mathlib-remeasure.json \
+  --series 改善前 before target/mathlib-remeasure.json \
+  --series 改善後 leansail target/mathlib-remeasure.json \
   --output target/mathlib-summary.json
 ```
 

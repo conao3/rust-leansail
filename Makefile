@@ -35,3 +35,8 @@ check-editors: build
 bench-mathlib:
 	cargo build --release -j 4
 	python3 tests/mathlib.py $(BENCH_ARGS)
+
+.PHONY: bench-mathlib-parallel
+bench-mathlib-parallel:
+	cargo build --release -j 4
+	python3 tests/mathlib_parallel.py $(BENCH_ARGS)

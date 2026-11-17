@@ -2,6 +2,129 @@
 
 `make bench-mathlib` は Mathlib の実ファイルを開き、LSP の要求、編集後の解析、プロセス別 RSS を計測する。通常の `make check` と CI は小さい文書による機能の比較を実行する。Mathlib の依存と計測結果は `target/` に生成する。
 
+## 本家との比較
+
+IntegralEqImproper.lean の中央値の本家比は、ハイライト初回 5.72 倍、反復 727.37 倍、semantic tokens 反復 18.85 倍、補完反復 4.58 倍、workspace/symbol 反復 9.73 倍である。hover は 0.94 倍、plainGoal は 0.92 倍で、要求ごとの時間を表に示す。
+
+公式 `lean --server` と、master の `2fc5678` の release host・native backend を、同じ回の計測で比較する。サーバー実装は `f618e81` と同じである。両構成に公式 Lean 4.35.0（git hash `eb6cafb7290e8bd5f2937522d8d804f58f02bafc`）と、同じ Mathlib v4.35.0（`56a005855ea17e0b0958f73ec801ae140b0a1679`）の Lake workspace を使う。backend は `native/` のソースをその公式 toolchain でビルドする。
+
+計測ホストは helios（Intel Core i5-8400、6 cores）。各反復の実行順は本家→Leansail、Leansail→本家を交互にする。OS のファイルキャッシュを維持し、開始前 2 秒間とセッション全体の外部 CPU が 0.75 cores 以下の回を採用する。見送り・完走後の負荷除外・中断をそれぞれ記録する。
+
+3 文書を順番に開き、全ての `waitForDiagnostics` と、プロジェクト・文書ごとの `$/lean/waitForILeans` が完了してから要求を測る。要求時は 3 文書とも開いた状態である。ハイライトを各文書への最初の要求にし、解析完了後の初回を独立に集計する。その他の反復も、最初の要求に続く 10 回を対象にする。workspace/symbol の検索語は `aecover_ball`。各セッションで同じ検索を文書ごとに実行する。
+
+起動から最初の非空診断までは最初の文書（IntegralEqImproper.lean）で測る。索引準備時間は文書を開かない独立セッションで、起動から `$/lean/waitForILeans {}` の応答までを測る。Lean 4.35.0 の Watchdog はこの要求の待機中に要求処理を止めるため、診断時間と別のセッションで評価する。
+
+Leansail は専用の永続索引を作成し、比較の全完走回で cache hit を確認する。初回の作成 1 回は、起動から検索に使えるまで 32427.254 ms、保存完了まで 60619.046 ms、外部 CPU は 0.302 cores（採用判定: true）。初回作成の採用 / 負荷除外 / 開始前の見送り / 中断は 1 / 0 / 28 / 0 回。初回作成はこの 1 標本を示す。
+
+値は中央値 / p95。時間の単位は ms、PSS は MiB。倍率は本家 / Leansail を中央値と p95 それぞれで計算し、1 より大きい値が Leansail の短縮・削減を表す。初回とセッションの指標は各 5 標本、反復は各文書・各要求 50 標本。p95 は生の標本から nearest rank で計算し、5 標本の p95 は最大値になる。セッション内の反復を含む分布であり、独立なセッション数は各 5 である。
+
+PSS は同じ時点の全子プロセス（本家は Watchdog と 3 workers、Leansail はそれらと Rust host）を合算する。解析・索引準備直後と、全要求を終えた時点を分ける。100 ms 間隔の時系列とプロセス別の値も JSON に保存する。
+
+全完走回の 3 文書・8 要求について、初回と全反復の 3,432 本文が本家と一致する。オブジェクトのキーを整列し、配列の順序を保った JSON の SHA-256 を比較する。`twice` の completionItem/resolve も一致する。診断通知は Tactic.lean の警告 2 件と情報 1 件の順序を正規化すると内容が一致する。追加の受信ログから 2 通りの配列と hash を照合し、本文の代表値も JSON に保存する。各構成・反復の本文の代表値は `target/*.responses.json`、比較した hash・標本・採用判定・実行ファイルとソースの指紋は [mathlib-upstream-comparison.json](mathlib-upstream-comparison.json) が持つ。
+
+![3 文書の要求時間の本家比](mathlib-upstream-comparison.svg)
+
+各文書の倍率を同じ対数軸で表示し、中央値と p95 を分ける。基準線は 1 倍である。
+
+### IntegralEqImproper.lean
+
+| 項目 | 本家 中央値 / p95 | Leansail 中央値 / p95 | 倍率 中央値 / p95 |
+| --- | ---: | ---: | ---: |
+| ハイライト初回 | 673.635 / 794.671 | 117.852 / 121.331 | 5.72 / 6.55 |
+| ハイライト反復 | 672.346 / 694.872 | 0.924 / 1.094 | 727.37 / 634.90 |
+| semantic tokens 反復 | 74.716 / 81.904 | 3.963 / 9.207 | 18.85 / 8.90 |
+| 補完反復 | 322.236 / 360.081 | 70.428 / 97.846 | 4.58 / 3.68 |
+| workspace/symbol 反復 | 850.690 / 871.502 | 87.456 / 89.395 | 9.73 / 9.75 |
+| 参照反復 | 20.872 / 23.427 | 13.106 / 14.219 | 1.59 / 1.65 |
+| 定義反復 | 21.493 / 22.622 | 13.333 / 14.388 | 1.61 / 1.57 |
+| hover 反復 | 1.364 / 1.713 | 1.445 / 1.564 | 0.94 / 1.10 |
+| plainGoal 反復 | 1.446 / 1.751 | 1.573 / 2.135 | 0.92 / 0.82 |
+
+### FiniteDimension.lean
+
+| 項目 | 本家 中央値 / p95 | Leansail 中央値 / p95 | 倍率 中央値 / p95 |
+| --- | ---: | ---: | ---: |
+| ハイライト初回 | 294.766 / 312.369 | 65.228 / 65.880 | 4.52 / 4.74 |
+| ハイライト反復 | 288.780 / 296.347 | 0.694 / 0.842 | 416.04 / 351.85 |
+| semantic tokens 反復 | 38.285 / 45.192 | 1.736 / 2.003 | 22.05 / 22.56 |
+| 補完反復 | 283.781 / 402.643 | 59.541 / 82.585 | 4.77 / 4.88 |
+| workspace/symbol 反復 | 844.978 / 876.922 | 88.049 / 91.592 | 9.60 / 9.57 |
+| 参照反復 | 19.186 / 21.116 | 12.610 / 13.252 | 1.52 / 1.59 |
+| 定義反復 | 20.259 / 21.380 | 13.614 / 14.324 | 1.49 / 1.49 |
+| hover 反復 | 1.491 / 6.844 | 1.495 / 1.660 | 1.00 / 4.12 |
+| plainGoal 反復 | 3.490 / 4.004 | 4.009 / 4.165 | 0.87 / 0.96 |
+
+### Tactic.lean
+
+| 項目 | 本家 中央値 / p95 | Leansail 中央値 / p95 | 倍率 中央値 / p95 |
+| --- | ---: | ---: | ---: |
+| ハイライト初回 | 2.936 / 9.129 | 1.454 / 1.520 | 2.02 / 6.00 |
+| ハイライト反復 | 1.993 / 3.285 | 0.396 / 0.636 | 5.03 / 5.16 |
+| semantic tokens 反復 | 3.101 / 4.046 | 0.963 / 1.613 | 3.22 / 2.51 |
+| 補完反復 | 262.081 / 355.528 | 68.030 / 91.967 | 3.85 / 3.87 |
+| workspace/symbol 反復 | 846.395 / 871.173 | 88.022 / 91.333 | 9.62 / 9.54 |
+| 参照反復 | 19.093 / 21.914 | 12.484 / 13.176 | 1.53 / 1.66 |
+| 定義反復 | 19.667 / 25.430 | 13.502 / 14.825 | 1.46 / 1.72 |
+| hover 反復 | 1.205 / 2.719 | 1.216 / 1.407 | 0.99 / 1.93 |
+| plainGoal 反復 | 1.086 / 1.219 | 1.248 / 1.477 | 0.87 / 0.83 |
+
+### 起動と 3 文書の PSS
+
+| 項目 | 本家 中央値 / p95 | Leansail 中央値 / p95 | 倍率 中央値 / p95 |
+| --- | ---: | ---: | ---: |
+| 起動から最初の非空診断 | 6884.395 / 10684.064 | 7015.356 / 7273.548 | 0.98 / 1.47 |
+| 起動からプロジェクト索引準備 | 21418.880 / 21545.757 | 5519.296 / 5563.834 | 3.88 / 3.87 |
+| 3 文書解析直後の全 PSS | 3596.155 / 3604.026 | 2526.203 / 2528.910 | 1.42 / 1.43 |
+| 3 文書要求実行後の全 PSS | 3767.910 / 3781.936 | 3126.693 / 3139.848 | 1.21 / 1.20 |
+
+| 計測 | 構成 | 採用 | 負荷除外 | 開始前の見送り | 中断 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 3 文書 | 本家 | 5 | 3 | 3 | 0 |
+| 索引のみ | 本家 | 5 | 1 | 0 | 0 |
+| 3 文書 | Leansail | 5 | 0 | 0 | 0 |
+| 索引のみ | Leansail | 5 | 0 | 0 | 0 |
+
+### 本家比較の再現手順
+
+Linux の開発環境を使い、グラフの描画には Harano Aji Gothic を用意する。公式 toolchain と Mathlib の準備は「再現手順」に従う。初回作成には新しい `index_cache_dir` を指定する。
+
+```bash
+toolchain_prefix="$(nix shell nixpkgs#elan --command elan run leanprover/lean4:v4.35.0 lean --print-prefix)"
+index_cache_dir="$PWD/target/upstream-comparison-cache"
+nix develop --command cargo build --release -j 4
+nix develop --command bash -c '
+  export PATH="$1/bin:$PATH" LEAN_SYSROOT="$1"
+  python3 -c '\''import sys; sys.path.insert(0, "tests"); from mathlib import build_backend; print(build_backend())'\''
+' bash "$toolchain_prefix"
+backend="$PWD/target/mathlib-backend/.lake/build/bin/leansail-backend"
+nix develop --command python3 tests/mathlib_index_prime.py \
+  --toolchain "$toolchain_prefix" --backend "$backend" \
+  --server leansail --index-cache-dir "$index_cache_dir" \
+  --samples 1 --repetitions 1 --wait-idle \
+  --output target/upstream-comparison-prime.json
+for scenario in documents index; do
+  extra=()
+  if [ "$scenario" = index ]; then extra=(--startup-only); fi
+  nix develop --command make bench-mathlib-upstream \
+    BENCH_ARGS="--toolchain $toolchain_prefix --backend $backend --index-cache-dir $index_cache_dir --require-cache-hit --server upstream --server leansail --samples 10 --repetitions 5 --edits 2 --wait-idle --resume ${extra[*]} --output target/upstream-comparison-$scenario.json"
+done
+nix develop --command python3 tests/mathlib_diagnostics.py \
+  --toolchain "$toolchain_prefix" --backend "$backend" \
+  --index-cache-dir "$index_cache_dir" --server upstream --server leansail \
+  --samples 1 --repetitions 1 --edits 2 --wait-idle \
+  --output target/upstream-comparison-diagnostics.json
+nix develop --command python3 tests/mathlib_upstream_report.py \
+  target/upstream-comparison-documents.json \
+  --index target/upstream-comparison-index.json \
+  --prime target/upstream-comparison-prime.json \
+  --diagnostics-reference target/upstream-comparison-diagnostics.json \
+  --output docs/mathlib-upstream-comparison.json \
+  --markdown target/upstream-comparison-tables.md \
+  --chart docs/mathlib-upstream-comparison.svg
+```
+
+集計は、各構成 5 セッション以上の採用、文書と索引の計測の host/backend・ホスト・toolchain の一致、全応答の一致、全 Leansail セッションの cache hit を検査する。`--resume` は採用済みの回を再利用し、負荷による見送りと除外は保存したまま不足分を実行する。
+
 ## 再現手順
 
 Linux と公式 Lean 4.35.0 の toolchain を使う。Mathlib は v4.35.0 の commit `56a005855ea17e0b0958f73ec801ae140b0a1679` に固定する。比較する `lean --server` と native backend は同じ toolchain の compiler、runtime、標準ライブラリを使い、host は release ビルドを使う。

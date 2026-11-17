@@ -1,11 +1,38 @@
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Leansail: a Lean language server with a Rust host" width="880">
+</p>
+
+<p align="center"><strong>A Lean language server with a Rust host and Lean-verified lifecycle rules</strong></p>
+
+<p align="center">
+  <a href="https://github.com/conao3/rust-leansail/actions/workflows/ci.yml"><img src="https://github.com/conao3/rust-leansail/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/conao3/rust-leansail" alt="License: Apache-2.0"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/Rust-edition%202024-orange" alt="Rust edition 2024"></a>
+  <a href="lean-toolchain"><img src="https://img.shields.io/badge/Lean-v4.35.0-blue" alt="Lean v4.35.0"></a>
+  <a href="https://github.com/conao3/rust-leansail/stargazers"><img src="https://img.shields.io/github/stars/conao3/rust-leansail?style=flat" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="#run">Run</a> ·
+  <a href="#エディタの設定">エディタの設定</a> ·
+  <a href="#what-runs-where">What runs where</a> ·
+  <a href="#mathlib-の計測">Mathlib の計測</a> ·
+  <a href="#verify">Verify</a> ·
+  <a href="#lsp-conformance">LSP conformance</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="https://github.com/conao3/lean-leanfran">leanfran</a> ·
+  <a href="https://github.com/conao3/rust-lsp-touchstone">lsp-touchstone</a>
+</p>
+
 # Leansail
 
 Leansail is a Lean language server with a Rust host, a native Lean backend, and
 protocol lifecycle rules written in Lean and compiled into Rust with
 [leanfran](https://github.com/conao3/lean-leanfran).
 
-We use [lsp-touchstone](https://github.com/conao3/rust-lsp-touchstone) to validate
-real development sessions through its strict client and checking proxy.
+Real development sessions are validated with
+[lsp-touchstone](https://github.com/conao3/rust-lsp-touchstone) through its strict
+client and checking proxy.
 
 ## Run
 

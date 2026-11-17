@@ -2,6 +2,7 @@ mod capabilities;
 mod framing;
 mod gate;
 mod host;
+mod index_cache;
 mod lifecycle;
 mod recovery;
 
@@ -18,6 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    IndexCache {
+        #[arg(long)]
+        commit: bool,
+    },
     Server {
         #[command(subcommand)]
         command: ServerCommand,
@@ -41,10 +47,13 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(code);
         }
     };
-    let Command::Server {
-        command: ServerCommand::RunServer { backend },
-    } = cli.command;
-    match host::run(&backend) {
+    let result = match cli.command {
+        Command::Server {
+            command: ServerCommand::RunServer { backend },
+        } => host::run(&backend),
+        Command::IndexCache { commit } => index_cache::run(commit),
+    };
+    match result {
         Ok(code) => std::process::ExitCode::from(u8::try_from(code).unwrap_or(255)),
         Err(error) => {
             eprintln!("leansail: {error}");

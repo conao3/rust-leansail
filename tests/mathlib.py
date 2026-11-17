@@ -77,7 +77,12 @@ def prepare(workspace):
 def build_backend():
     directory = ROOT / "target/mathlib-backend"
     directory.mkdir(parents=True, exist_ok=True)
-    for name in ["Main.lean", "lakefile.toml"]:
+    for name in [
+        "Main.lean",
+        "LeansailTrace.lean",
+        "LeansailIndex.lean",
+        "lakefile.toml",
+    ]:
         source = ROOT / "native" / name
         target = directory / name
         if not target.exists() or target.read_bytes() != source.read_bytes():
@@ -225,6 +230,7 @@ class Monitor:
         self.thread.join()
         return {
             "sample_interval_ms": 100,
+            "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"),
             "sampling_error": self.error,
             "processes": list(self.peaks.values()),
             "simultaneous_peak_rss_kib": self.total_peak_kib,
@@ -459,7 +465,7 @@ def session(args, label, command, repetition):
     return result
 
 
-def main(session_runner=session):
+def main(session_runner=session, backend_builder=build_backend):
     parser = argparse.ArgumentParser(
         description="Mathlib の実ファイルを用いた LSP 比較計測"
     )
@@ -479,9 +485,15 @@ def main(session_runner=session):
     parser.add_argument("--wait-idle", action="store_true")
     parser.add_argument("--retry-delay", type=float, default=30)
     parser.add_argument("--max-attempts", type=int, default=200)
+    parser.add_argument("--continue-incomplete", action="store_true")
     parser.add_argument(
         "--server",
-        choices=["upstream", "leansail", "before", "native"],
+        choices=["upstream", "leansail", "before", "native"]
+        + (
+            ["baseline", "no-index", "no-cache"]
+            if session_runner.__name__ == "startup_session"
+            else []
+        ),
         action="append",
     )
     parser.add_argument("--profile", action="store_true")
@@ -489,9 +501,11 @@ def main(session_runner=session):
     parser.add_argument("--host", type=Path, default=ROOT / "target/release/leansail")
     parser.add_argument("--backend", type=Path)
     parser.add_argument("--before-backend", type=Path)
+    parser.add_argument("--index-cache-dir", type=Path)
+    parser.add_argument("--startup-only", action="store_true")
     args = parser.parse_args()
     if session_runner != session and (args.profile or args.perf):
-        parser.error("並列シナリオは通常計測として実行してください")
+        parser.error("追加のシナリオは通常計測として実行してください")
     args.workspace = args.workspace.resolve()
     args.output = args.output.resolve()
     args.host = args.host.resolve()
@@ -520,7 +534,7 @@ def main(session_runner=session):
         prepare(args.workspace)
     if args.prepare_only:
         return
-    args.backend = args.backend.resolve() if args.backend else build_backend()
+    args.backend = args.backend.resolve() if args.backend else backend_builder()
     os.chdir(args.workspace)
     env_json = run(
         [
@@ -554,7 +568,10 @@ def main(session_runner=session):
             str(args.backend),
         ],
         "native": [str(args.backend), "--server"],
+        "baseline": [str(args.backend), "--server", "--baseline"],
     }
+    commands["no-index"] = commands["leansail"]
+    commands["no-cache"] = commands["leansail"]
     if args.before_backend:
         commands["before"] = [
             str(args.host),
@@ -571,6 +588,7 @@ def main(session_runner=session):
         "cpu_count": os.cpu_count(),
         "machine": {"hostname": platform.node(), "platform": platform.platform()},
         "scenario": session_runner.__module__ + "." + session_runner.__name__,
+        "startup_only": args.startup_only,
         "loadavg": os.getloadavg(),
         "profile": args.profile,
         "perf": args.perf,
@@ -602,6 +620,7 @@ def main(session_runner=session):
             "machine",
             "cpu_count",
             "scenario",
+            "startup_only",
             "before_backend_sha256",
         ]:
             if previous[key] != output[key]:
@@ -671,6 +690,9 @@ def main(session_runner=session):
                     print(f"{label} {repetition}: 採用", flush=True)
                     break
                 if not args.wait_idle or attempt + 1 == args.max_attempts:
+                    if args.continue_incomplete:
+                        print(f"{label} {repetition}: 未計測", flush=True)
+                        break
                     raise RuntimeError(
                         "外部負荷が上限を超えました。--resume で再開できます"
                     )

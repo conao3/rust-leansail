@@ -11,6 +11,48 @@ use crate::framing;
 use crate::gate::{Action, Gate};
 use crate::recovery::Recovery;
 
+struct Trace(Option<std::fs::File>);
+
+impl Trace {
+    fn new() -> io::Result<Self> {
+        Ok(Self(
+            std::env::var_os("LEANSAIL_TRACE")
+                .map(|path| {
+                    std::fs::OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(format!(
+                            "{}.{pid}.jsonl",
+                            Path::new(&path).display(),
+                            pid = std::process::id()
+                        ))
+                })
+                .transpose()?,
+        ))
+    }
+
+    fn event(&mut self, event: &str) -> io::Result<()> {
+        use std::io::Write;
+
+        if let Some(file) = self.0.as_mut() {
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let ns = ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64;
+            writeln!(
+                file,
+                "{}",
+                json!({"event":event, "ns":ns, "pid":std::process::id()})
+            )?;
+        }
+        Ok(())
+    }
+}
+
 enum Event {
     Client(Vec<u8>),
     Server(Vec<u8>),
@@ -83,10 +125,13 @@ fn forward(input: &mut impl io::Write, restart: Option<Value>, body: &[u8]) -> i
 }
 
 pub fn run(path: &Path) -> io::Result<i32> {
+    let mut trace = Trace::new()?;
+    trace.event("host_main")?;
     let mut command = Command::new(path);
     command
         .arg("--server")
         .env("LEAN_WORKER_PATH", path)
+        .env("LEANSAIL_INDEX_HELPER", std::env::current_exe()?)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
@@ -106,6 +151,7 @@ pub fn run(path: &Path) -> io::Result<i32> {
         }
     }
     let mut backend = Backend(command.spawn()?);
+    trace.event("backend_spawned")?;
     let mut input = backend.0.stdin.take();
     let output = backend.0.stdout.take().unwrap();
     let (events, receive) = mpsc::sync_channel(64);
@@ -146,6 +192,11 @@ pub fn run(path: &Path) -> io::Result<i32> {
                         {
                             return backend_disconnected(&mut stdout, recovery.fail_pending());
                         }
+                        if message.get("method").and_then(Value::as_str)
+                            == Some("textDocument/didOpen")
+                        {
+                            trace.event("did_open_forwarded")?;
+                        }
                     }
                     Action::Drop => {}
                     Action::Reply(reply) => {
@@ -159,6 +210,14 @@ pub fn run(path: &Path) -> io::Result<i32> {
             }
             Event::Server(body) => {
                 let message: Value = serde_json::from_slice(&body)?;
+                if message.pointer("/result/capabilities").is_some() {
+                    trace.event("initialize_response")?;
+                }
+                if message.get("method").and_then(Value::as_str)
+                    == Some("textDocument/publishDiagnostics")
+                {
+                    trace.event("publish_diagnostics")?;
+                }
                 let reply = recovery.server(&message);
                 let body = if let Some(reply) = &reply {
                     serde_json::to_vec(reply)?

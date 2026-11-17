@@ -1,6 +1,12 @@
 name = "leansail-backend"
 defaultTargets = ["leansail-backend"]
 
+[[lean_lib]]
+name = "LeansailTrace"
+
+[[lean_lib]]
+name = "LeansailIndex"
+
 [[lean_exe]]
 name = "leansail-backend"
 root = "Main"

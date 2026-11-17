@@ -1,5 +1,7 @@
 import Lean.Server.Watchdog
 import Lean.Server.FileWorker
+import LeansailTrace
+import LeansailIndex
 
 open Lean Lean.Server Lean.Server.RequestM
 
@@ -193,14 +195,17 @@ def installHandlers (useCache : Bool) : IO Unit := do
         { original with handle := profileRequest method original.handle log })
 
 unsafe def main (args : List String) : IO UInt32 := do
+  leansailTrace "backend_main"
   if args == ["--version"] then
     IO.println s!"Leansail backend (Lean {Lean.versionString})"
     return 0
   enableInitializersExecution
   initSearchPath (← findSysroot)
+  leansailTrace "search_path_ready"
   let baseline := args.contains "--baseline"
   let args := args.filter (· != "--baseline")
   installHandlers (!baseline)
+  leansailTrace "handlers_ready"
   if args.contains "--worker" then
     for arg in args do
       if arg != "--worker" && !arg.startsWith "file://" then
@@ -208,4 +213,7 @@ unsafe def main (args : List String) : IO UInt32 := do
     return ← Lean.Server.FileWorker.workerMain {}
   if args != [] && args != ["--server"] then
     throw <| IO.userError "Usage: leansail-backend [--server] [--baseline]"
-  Lean.Server.Watchdog.watchdogMain (if baseline then ["--baseline"] else [])
+  if baseline then
+    Lean.Server.Watchdog.watchdogMain ["--baseline"]
+  else
+    runIndexedWatchdog []

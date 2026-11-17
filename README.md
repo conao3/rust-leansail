@@ -110,25 +110,34 @@ end, {})
 - `native/Main.lean` embeds upstream `Lean.Server`, retaining its watchdog,
   per-document workers, request handlers, widgets and RPC. 解析済みの文書のハイライト索引と semantic tokens の応答を再利用する。索引の module 名は import の配列から直接取得し、上流との同値性を Lean で検査する。
 
-Rust currently supervises one native watchdog; upstream Lean still manages
-the per-document workers. Project-wide indexing, worker scheduling and resource
-budgets are subsequent architecture work. [Architecture](docs/architecture.md)
-describes these boundaries and the role of leanfran.
+ファイルごとの worker は native Watchdog が管理する。Mathlib 3 文書・6 コアの前景 p95 と PSS の比較に基づき、この境界を継続する。[設計](docs/architecture.md) が host の担当範囲と leanfran の判定規則を定める。
 
 ## Mathlib の計測
 
-`make bench-mathlib` は公式 Lean 4.35.0 と Mathlib 全体のキャッシュを使い、実ファイル 3 本の起動、7 種類の要求、編集、プロセス別 RSS を測る。[手順と全表](docs/mathlib-benchmark.md)、[標本と集計](docs/mathlib-results.json) を参照する。
+helios (Intel Core i5-8400、6 コア、メモリ 46.9 GiB) で、素の Lean、改善前 Leansail (`1fa2f5a` 相当)、改善後 Leansail (`00cbf90`) を各 5 セッション採用した。公式 Lean 4.35.0 と Mathlib v4.35.0 を使い、外部 CPU 平均の上限は 0.75 cores。通常の完走の負荷除外は 0 / 1 / 6 回、開始前の見送りは 2 / 0 / 59 回。改善後の計測には、検証実行のための中断 1 回を別に記録する。[全表・標本・再現手順](docs/mathlib-benchmark.md) を参照する。
 
-採用したセッションは素の Lean が 3 回、改善前 Leansail が 2 回、改善後が 0 回。負荷で除外した完走は計 6 回、開始前の見送りは計 21 回である。改善後の性能と改善率は **未計測**。以下は大きい積分ファイルの中央値 / p95 (ms) で、改善前の構成には文書版ごとのハイライト索引の再利用を含む。
+以下は大きい積分ファイルの中央値 / p95 (ms)。要求の反復は各 50 標本、初回と起動は各 5 標本、各種類の編集は 10 標本。全 3 文書・7 種類の初回の応答本文は全構成・全採用セッションで一致する。
 
-| 対象                 |           素の Lean |     改善前 Leansail | 改善後 Leansail |
-| -------------------- | ------------------: | ------------------: | --------------: |
-| 起動から最初の診断   | 7064.298 / 7212.888 | 7932.438 / 8659.311 |          未計測 |
-| ハイライト初回       |   699.074 / 717.132 |   718.965 / 740.277 |          未計測 |
-| ハイライト反復       |   676.456 / 722.644 |       0.957 / 3.264 |          未計測 |
-| semantic tokens 反復 |     75.746 / 88.765 |     75.584 / 77.486 |          未計測 |
+| 対象                 |            素のLean |              改善前 |              改善後 |
+| -------------------- | ------------------: | ------------------: | ------------------: |
+| 起動から最初の診断   | 6731.764 / 9164.560 | 6903.288 / 7748.603 | 7468.921 / 7911.809 |
+| ハイライト初回       |   655.289 / 692.603 |   675.450 / 756.378 |   118.954 / 188.783 |
+| ハイライト反復       |   662.849 / 700.836 |       1.038 / 6.675 |       0.926 / 4.263 |
+| semantic tokens 反復 |     74.569 / 94.002 |     75.085 / 90.037 |       4.012 / 6.572 |
+| 末尾編集から解析完了 | 1304.064 / 1341.211 | 1306.481 / 1340.508 | 1304.430 / 1338.907 |
 
-Lean 側の改善はハイライトの import 全走査の削減と、完了した semantic tokens の応答再利用。4 件の同値性の定理、全 59 項目、実エディタ、Nix 配布物の検査で機能を確かめる。CPU プロファイルでは Rust host は約 0.15%、主な費用は Lean の elaboration、参照抽出、Watchdog の索引にある。
+改善前と比べた中央値の短縮は、ハイライト初回が 82.4%、semantic tokens 反復が 94.7%。改善前にも文書版ごとのハイライト索引再利用を含む。起動の中央値は改善前 6.903 秒、改善後 7.469 秒で、末尾編集から解析完了の中央値は両構成とも約 1.30 秒。索引の直接参照は 4 件の同値性の定理で検査し、semantic tokens は編集・再オープン・部分応答の回帰検査で確かめる。
+
+並列解析は同じ 3 文書を同時に開き、両構成で 5 セッション、各条件 50 回を測る。背景を再解析中の p95 と全プロセスの合計 PSS は次のとおり。診断通知はクライアントでの通知受信時点、解析完了は `waitForDiagnostics` の完了までを指す。
+
+| 構成      | hover p95 ms | 補完 p95 ms | 診断通知 p95 ms | 合計 PSS 最大 MiB |
+| --------- | -----------: | ----------: | --------------: | ----------------: |
+| 素の Lean |       23.363 |     497.745 |         260.367 |            3805.3 |
+| Leansail  |       23.706 |     562.340 |         262.257 |            3850.9 |
+
+Leansail の静かな条件は hover 12.626 ms、補完 506.244 ms、診断通知 229.350 ms。背景解析による差は 11.1 / 56.1 / 32.9 ms で、解析後も合計 PSS 中央値 3796.7 MiB を保持する。この 3 文書・6 コアでは native Watchdog の worker 管理を継続する。メモリ上限を評価するときは、文書の保持数と退避・再構築まで含める。[並列解析の集計](docs/mathlib-parallel-results.json) が全標本の集計とプロセス別 PSS を持つ。
+
+プロジェクト索引は 1 セッション内で既に共有される。複数セッション間の共有と永続化は、Watchdog の runtime と索引の保持量を分け、重複 PSS、`.ilean` の再読込、準備時間、依存更新時の無効化で評価する。
 
 ## Verify
 

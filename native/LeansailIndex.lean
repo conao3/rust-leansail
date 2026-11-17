@@ -1,7 +1,8 @@
 import Lean.Server.Watchdog
 import LeansailTrace
+import LeansailSymbols
 
-open Lean Lean.Server Lean.Server.Watchdog Lean.Lsp IO
+open Lean Lean.Server Lean.Server.Watchdog Lean.Lsp Lean.JsonRpc IO
 
 initialize indexRegions : IO.Ref (Array CompactedRegion) ← IO.mkRef #[]
 
@@ -15,8 +16,9 @@ def inspectIndexCache (helper : String) (manifest : Json) (commit := false) : IO
   IO.ofExcept (Json.parse output.stdout)
 
 def loadIndexSnapshot (path : System.FilePath) (referenceData : Std.Mutex ReferenceData) : IO Unit := do
-  let (ileans, region) ← unsafe CompactedRegion.read (α := ILeanMap) path #[]
+  let ((ileans, symbols), region) ← unsafe CompactedRegion.read (α := ILeanMap × Leansail.SymbolCache) path #[]
   indexRegions.modify (·.push region)
+  Leansail.symbolCache.atomically (set symbols)
   referenceData.atomically do
     modify fun rd => rd.modifyReferences fun refs => { refs with ileans }
 
@@ -56,16 +58,18 @@ def startLoadingIndex (referenceData : Std.Mutex ReferenceData) : IO Unit := do
       catch error =>
         failures := failures + 1
         IO.eprintln s!"索引ファイルを読み込めません: {path}: {error}"
+    let ileans ← referenceData.atomically do
+      return (← get).references.ileans
+    let symbols := Leansail.prepareSymbolCache ileans
+    Leansail.symbolCache.atomically (set symbols)
     leansailTrace "index_done" "ilean"
     if failures == 0 then
       if let some cached := cached? then
-        let ileans ← referenceData.atomically do
-          return (← get).references.ileans
         let _ ← ServerTask.IO.asTask do
           try
             let path := System.FilePath.mk (← IO.ofExcept (cached.getObjValAs? String "path"))
             let temporary := System.FilePath.mk s!"{path}.{← IO.Process.getPID}"
-            let _ ← unsafe CompactedRegion.save temporary `leansailIndex ileans #[] none
+            let _ ← unsafe CompactedRegion.save temporary `leansailIndex (ileans, symbols) #[] none
             let current ← inspectIndexCache helper manifest
             if (← IO.ofExcept (current.getObjValAs? String "key")) ==
                 (← IO.ofExcept (cached.getObjValAs? String "key")) then
@@ -79,6 +83,111 @@ def startLoadingIndex (referenceData : Std.Mutex ReferenceData) : IO Unit := do
         pure ()
   referenceData.atomically do
     modify fun rd => { rd with loadingTask := task.mapCheap fun _ => () }
+
+partial def symbolMainLoop (clientTask : ServerTask ServerEvent) : ServerM Unit := do
+  let st ← read
+  let workers ← st.fileWorkersRef.get
+  let mut workerTasks := #[]
+  for (_, fw) in workers do
+    let some commTask := fw.commTask?
+      | continue
+    if (← getWorkerState fw) matches WorkerState.crashed then
+      continue
+    workerTasks := workerTasks.push <| commTask.mapCheap (ServerEvent.workerEvent fw)
+
+  let ev ← ServerTask.waitAny (workerTasks.toList ++ [clientTask]) (by simp)
+  match ev with
+  | ServerEvent.clientMsg msg =>
+    match msg with
+    | Message.request id "shutdown" _ =>
+      shutdown
+      writeMessage { id, result := Json.null : Response Json }
+    | Message.request id method (some params) =>
+      if method == "workspace/symbol" then
+        handleReferenceRequest WorkspaceSymbolParams (Array SymbolInformation) id (toJson params)
+          (fun p => do Leansail.searchWorkspaceSymbols (← read).references p.query)
+      else
+        handleRequest id method (toJson params)
+      symbolMainLoop (← runClientTask)
+    | Message.response id result =>
+      handleResponse id result
+      symbolMainLoop (← runClientTask)
+    | Message.responseError id code message data? =>
+      handleResponseError id code message data?
+      symbolMainLoop (← runClientTask)
+    | Message.notification method (some params) =>
+      handleNotification method (toJson params)
+      symbolMainLoop (← runClientTask)
+    | _ => throwServerError "Got invalid JSON-RPC message"
+  | ServerEvent.clientError e => throw e
+  | ServerEvent.workerEvent fw ev =>
+    let doc := fw.doc
+    let uri := doc.uri
+    match ev with
+    | WorkerEvent.ioError e =>
+      throwServerError s!"IO error while processing events for {uri}: {e}"
+    | WorkerEvent.crashed exitCode =>
+      let (errorCode, errorCausePointer) :=
+        if exitCode = 1 then
+          (ErrorCode.workerExited, "see stderr for exception")
+        else
+          (ErrorCode.workerCrashed, "likely due to a stack overflow or a bug")
+      errorPendingRequests uri errorCode
+        s!"Server process for {uri} crashed, {errorCausePointer}."
+      writeMessage <| mkFileProgressAtPosNotification doc 0 (kind := LeanFileProgressKind.fatalError)
+      setWorkerState fw .crashed
+      symbolMainLoop clientTask
+    | WorkerEvent.terminated =>
+      throwServerError
+        "Internal server error: Got termination event for worker that should have been removed"
+    | .importsChanged =>
+      startFileWorker doc
+      symbolMainLoop clientTask
+
+def initAndRunSymbolWatchdog : ServerM Unit := do
+  let st ← read
+  try
+    discard $ st.hIn.readLspNotificationAs "initialized" InitializedParams
+    writeMessage {
+      id := RequestID.str "register_lean_watcher"
+      method := "client/registerCapability"
+      param := some {
+        registrations := #[{
+          id := "lean_watcher"
+          method := "workspace/didChangeWatchedFiles"
+          registerOptions := some <| toJson {
+            watchers := #[ { globPattern := "**/*.lean" }, { globPattern := "**/*.ilean" } ]
+            : DidChangeWatchedFilesRegistrationOptions
+            }
+        }]
+        : RegistrationParams
+      }
+      : Request (Option RegistrationParams)
+    }
+    let clientTask ← runClientTask
+    symbolMainLoop clientTask
+  catch err =>
+    shutdown
+    throw err
+
+  while true do
+    let msg: JsonRpc.Message ←
+      try
+        st.hIn.readLspMessage
+      catch _ =>
+        pure (Message.notification "exit" none)
+    match msg with
+    | .notification "exit" none =>
+      break
+    | .request id _ _ =>
+      writeMessage {
+        id,
+        code := .invalidRequest,
+        message := "Request received after 'shutdown' request."
+        : ResponseError Unit
+      }
+    | _ =>
+      continue
 
 def runIndexedWatchdog (args : List String) : IO UInt32 := do
   let i ← IO.getStdin
@@ -116,7 +225,7 @@ def runIndexedWatchdog (args : List String) : IO UInt32 := do
   let logData : LogData := { cfg := logCfg, chan? := logChan? }
   runMessageLoggingTask logData
   try
-    ReaderT.run initAndRunWatchdogAux {
+    ReaderT.run initAndRunSymbolWatchdog {
       hIn := i
       hOut := o
       logData

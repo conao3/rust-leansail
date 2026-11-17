@@ -74,6 +74,9 @@ def startup_session(args, label, command, repetition):
         path.unlink()
     env = dict(os.environ, LEANSAIL_TRACE=str(prefix))
     env.pop("LEAN_WORKER_PATH", None)
+    env.pop("LEANSAIL_SYMBOL_PROFILE", None)
+    if args.symbol_profile:
+        env["LEANSAIL_SYMBOL_PROFILE"] = "1"
     env.pop("LEANSAIL_BENCH_SKIP_INDEX", None)
     env.pop("LEANSAIL_BENCH_SKIP_CACHE", None)
     env["LEANSAIL_INDEX_CACHE_DIR"] = str(
@@ -263,7 +266,7 @@ def startup_session(args, label, command, repetition):
     )
     if (
         args.require_cache_hit
-        and label == "leansail"
+        and label in ["leansail", "before"]
         and result["index_source"] != "cache"
     ):
         raise RuntimeError(

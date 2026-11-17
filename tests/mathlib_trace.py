@@ -13,12 +13,13 @@ def replace(source, before, after):
     return source.replace(before, after)
 
 
-def build_backend():
+def build_backend(source_dir=None, target=None, watchdog_transform=None):
+    source_dir = source_dir or ROOT / "native"
     prefix = Path(
         run(["lean", "--print-prefix"], ROOT, capture_output=True).stdout.strip()
     )
     source = prefix / "src/lean/Lean/Server"
-    target = ROOT / "target/mathlib-trace-backend"
+    target = target or ROOT / "target/mathlib-trace-backend"
     target.mkdir(parents=True, exist_ok=True)
     hashes = {}
     for module in ["Watchdog", "FileWorker"]:
@@ -86,13 +87,15 @@ def build_backend():
                 '  let initParams ← i.readLspRequestAs "initialize" InitializeParams',
                 '  leansailTrace "worker_ready"\n  let initParams ← i.readLspRequestAs "initialize" InitializeParams',
             )
+        if module == "Watchdog" and watchdog_transform:
+            text = watchdog_transform(text)
         (target / f"Bench{module}.lean").write_text(text)
-    main = (ROOT / "native/Main.lean").read_text()
+    main = (source_dir / "Main.lean").read_text()
     for module in ["Watchdog", "FileWorker"]:
         main = main.replace(f"import Lean.Server.{module}\n", f"import Bench{module}\n")
     (target / "Main.lean").write_text(main)
     index = (
-        (ROOT / "native/LeansailIndex.lean")
+        (source_dir / "LeansailIndex.lean")
         .read_text()
         .replace("import Lean.Server.Watchdog", "import BenchWatchdog")
     )
@@ -103,10 +106,14 @@ def build_backend():
     )
     (target / "LeansailIndex.lean").write_text(index)
     (target / "LeansailTrace.lean").write_bytes(
-        (ROOT / "native/LeansailTrace.lean").read_bytes()
+        (source_dir / "LeansailTrace.lean").read_bytes()
     )
+    if (source_dir / "LeansailSymbols.lean").exists():
+        (target / "LeansailSymbols.lean").write_bytes(
+            (source_dir / "LeansailSymbols.lean").read_bytes()
+        )
     (target / "lakefile.toml").write_text(
-        (ROOT / "native/lakefile.toml").read_text()
+        (source_dir / "lakefile.toml").read_text()
         + '\n[[lean_lib]]\nname = "BenchWatchdog"\n\n[[lean_lib]]\nname = "BenchFileWorker"\n'
     )
     (target / "upstream-hashes.json").write_text(json.dumps(hashes, indent=2) + "\n")

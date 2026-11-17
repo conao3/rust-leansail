@@ -58,6 +58,10 @@ invariants and behavior tests. Keep OS I/O, threads and process control in Rust.
 
 `native/LeansailIndex.lean` は Watchdog の参照索引を `.ilean` から非同期に構築し、Lean の compacted region に保存する。保存は索引の準備完了とは別のタスクで行う。次のセッションでは、検証した領域を読み込み、worker の未保存の参照情報を上流と同じ規則で優先する。領域は Watchdog の存続中に保持する。ファイル変更の通知、参照要求、worker の起動と復旧は上流の Watchdog を使う。
 
+`workspace/symbol` は module ごとの定義の表示名と UTF-16 の範囲を準備し、永続領域に参照索引と一緒に保存する。未保存文書の参照を上流の `allRefs` で優先し、その module 順と定義順で候補を列挙する。上流の fuzzy match、同点時の名前の長さによる整列、整列後の先頭 1,000 件の選択を適用する。位置のオブジェクトは採用した候補に対して構築する。
+
+`native/LeansailSymbols.lean` の `PreparedModule` は元の不変な参照と、準備済みの定義が再計算に等しいことの証明を保持する。`withPtrEq` で同じ参照オブジェクトを判定し、別の参照では定義配列の等値判定を計算する。`reuseDefinitions_eq` はどちらの場合も再計算と等しいことを検査する。編集、close、ファイル監視による索引の変更は各要求で受け取った参照に反映され、キャッシュはその要求に含まれる module だけを保持する。native Watchdog のイベントループでこの要求を専用 handler に配送し、その他の要求・通知・worker の管理は上流の関数を呼ぶ。
+
 Rust の `index-cache` 補助プロセスは `.ilean` の全パスと内容の SHA-256、toolchain、host と backend の SHA-256、Lake manifest、順序を保ったモジュールとソースの探索先、作業ディレクトリ、形式の版からキーを作る。保存前にもキーを照合し、payload と metadata をそれぞれ一時ファイルから rename する。読み込み時には payload の SHA-256 も検査する。`src/index_cache.rs` の Lean 定義と 5 件の定理が、入力のハッシュ・版・toolchain・payload のハッシュの一致を有効性の必要条件とし、全部が一致すると受理する。Rust は leanfran が生成した文字列と整数の比較を呼ぶ。ハッシュの計算、ファイル操作、compacted region の保存と読み込みは証明の範囲外で、内容変更と破損の検査、実際の LSP の比較で検証する。
 
 保存先は `$XDG_CACHE_HOME/leansail/index/`、未設定時は `$HOME/.cache/leansail/index/` とする。`LEANSAIL_INDEX_CACHE_DIR` で指定できる。キャッシュの検証や保存の I/O エラーは標準エラーに記録し、`.ilean` による索引構築を継続する。backend を単独で起動した場合も `.ilean` を使う。worker ごとの解析状態とハイライト索引は文書の版に対応して保持する。追加の Rust 化は計測で遅いと分かった処理を対象にする。

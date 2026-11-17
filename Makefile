@@ -12,6 +12,7 @@ check: build
 	lake -d lean build
 	cargo test -j 4
 	python3 tests/index_cache.py
+	python3 tests/workspace_symbols.py
 	timeout 30s python3 tests/capabilities.py
 	python3 tests/baseline.py --lean "$$(pwd)/tests/command" --output target/session.json --samples 2 --declarations 30 --edits 2 --regression --lifecycle-check
 	python3 tests/semantic_tokens.py

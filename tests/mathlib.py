@@ -81,6 +81,7 @@ def build_backend():
         "Main.lean",
         "LeansailTrace.lean",
         "LeansailIndex.lean",
+        "LeansailSymbols.lean",
         "lakefile.toml",
     ]:
         source = ROOT / "native" / name
@@ -505,6 +506,7 @@ def main(session_runner=session, backend_builder=build_backend):
     parser.add_argument("--index-cache-dir", type=Path)
     parser.add_argument("--startup-only", action="store_true")
     parser.add_argument("--require-cache-hit", action="store_true")
+    parser.add_argument("--symbol-profile", action="store_true")
     args = parser.parse_args()
     if (
         session_runner.__name__ == "startup_session"
@@ -601,6 +603,7 @@ def main(session_runner=session, backend_builder=build_backend):
         "startup_only": args.startup_only,
         "loadavg": os.getloadavg(),
         "profile": args.profile,
+        "symbol_profile": args.symbol_profile,
         "perf": args.perf,
         "host_sha256": hashlib.sha256(args.host.read_bytes()).hexdigest(),
         "backend_sha256": hashlib.sha256(args.backend.read_bytes()).hexdigest(),
@@ -626,6 +629,7 @@ def main(session_runner=session, backend_builder=build_backend):
             "perf",
             "host_sha256",
             "backend_sha256",
+            "symbol_profile",
             "max_outside_cores",
             "machine",
             "cpu_count",

@@ -2,7 +2,8 @@ import copy
 import unittest
 
 from mathlib import FILES, METHODS
-from mathlib_upstream_report import summarize
+from mathlib_upstream import digest
+from mathlib_upstream_report import diagnostic_order, summarize
 
 
 def fixture():
@@ -81,6 +82,29 @@ def fixture():
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_only_diagnostic_array_order_is_normalized(self):
+        first = [{"message": "警告", "severity": 2}, {"message": "情報", "severity": 3}]
+        second = list(reversed(first))
+        result = diagnostic_order({digest(first), digest(second)}, [first, second])
+        self.assertEqual(result["sha256"], digest(second))
+        changed = [{"message": "別の警告", "severity": 2}]
+        with self.assertRaises(AssertionError):
+            diagnostic_order({digest(first), digest(changed)}, [first, changed])
+        with self.assertRaises(AssertionError):
+            diagnostic_order({digest(first), digest(second)}, [first])
+
+    def test_diagnostic_notifications_are_separate_from_request_results(self):
+        source, index, prime = fixture()
+        source["sessions"][0]["files"][0]["diagnostics_sha256"] = "途中の通知"
+        summary = summarize(source, index, prime)
+        self.assertEqual(
+            set(summary["diagnostic_notification_sha256"][FILES[0]]["upstream"]),
+            {"diagnostics", "途中の通知"},
+        )
+        self.assertEqual(
+            summary["equivalence"][FILES[0]][METHODS[0]]["bodies_checked"], 30
+        )
+
     def test_raw_samples_and_pss_totals(self):
         summary = summarize(*fixture())
         metric = summary["files"][FILES[0]]["補完反復"]

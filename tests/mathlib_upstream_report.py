@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mathlib import FILES, METHODS, ROOT, stats
 from mathlib_completion_report import counts
+from mathlib_upstream import digest
 
 METRICS = [
     ("ハイライト初回", "textDocument/documentHighlight", "first"),
@@ -37,6 +38,54 @@ def comparison(upstream, leansail, unit="ms"):
         "ratio_median": left["median"] / right["median"],
         "ratio_p95": left["p95"] / right["p95"],
     }
+
+
+def diagnostic_order(hashes, bodies):
+    representatives = {digest(body): body for body in bodies}
+    assert set(hashes) <= representatives.keys(), "診断本文の代表値を追加してください"
+    normalized = {
+        digest(
+            sorted(
+                representatives[value],
+                key=lambda d: json.dumps(d, sort_keys=True, ensure_ascii=False),
+            )
+        )
+        for value in hashes
+    }
+    assert len(normalized) == 1, "診断通知の内容が一致しません"
+    return {
+        "comparison": "診断配列の順序を正規化",
+        "sha256": next(iter(normalized)),
+        "observed_sha256": sorted(hashes),
+        "representative_bodies": {value: representatives[value] for value in hashes},
+    }
+
+
+def diagnostics(source, reference, summary):
+    for key in [
+        "mathlib_revision",
+        "host_sha256",
+        "backend_sha256",
+        "lean_git_hash",
+        "machine",
+    ]:
+        assert source[key] == reference[key], key
+    result = {}
+    for relative, labels in summary["diagnostic_notification_sha256"].items():
+        hashes = set().union(*labels.values())
+        if len(hashes) == 1:
+            result[relative] = {
+                "comparison": "配列の順序も一致",
+                "sha256": next(iter(hashes)),
+            }
+        else:
+            bodies = [
+                session["after_index"][-1]["diagnostics"]
+                for session in reference["sessions"]
+                if session["after_index"][-1]["uri"].endswith("/" + relative)
+            ]
+            result[relative] = diagnostic_order(hashes, bodies)
+    return result
 
 
 def summarize(source, index, prime):
@@ -83,6 +132,7 @@ def summarize(source, index, prime):
                 for r in entry["requests"].values()
             )
     equivalence = {}
+    diagnostic_notifications = {}
     files = {}
     for relative in FILES:
         entries = {
@@ -104,9 +154,23 @@ def summarize(source, index, prime):
             ]
             assert len(set(values)) == 1, (relative, method)
             hashes[method] = {"sha256": values[0], "bodies_checked": len(values)}
-        for key in ["diagnostics_sha256", "completion_resolved_sha256"]:
-            assert len({f[key] for f in completed}) == 1, (relative, key)
-            hashes[key] = {"sha256": completed[0][key], "sessions": len(completed)}
+        diagnostic_notifications[relative] = {
+            label: sorted(
+                {
+                    next(f for f in s["files"] if f["path"] == relative)[
+                        "diagnostics_sha256"
+                    ]
+                    for s in source["sessions"]
+                    if s["server"] == label
+                }
+            )
+            for label in selected
+        }
+        assert len({f["completion_resolved_sha256"] for f in completed}) == 1, relative
+        hashes["completionItem/resolve"] = {
+            "sha256": completed[0]["completion_resolved_sha256"],
+            "sessions": len(completed),
+        }
         equivalence[relative] = hashes
         files[relative] = {}
         for title, method, phase in METRICS:
@@ -164,6 +228,7 @@ def summarize(source, index, prime):
         "files": files,
         "session_metrics": session_metrics,
         "equivalence": equivalence,
+        "diagnostic_notification_sha256": diagnostic_notifications,
         "initial_creation": {
             "index_ready_ms": initial["index_ready_ms"],
             "cache_ready_ms": initial["cache_ready_ms"],
@@ -216,12 +281,9 @@ def chart(summary, output):
     from matplotlib import font_manager
     from matplotlib import pyplot as plt
 
-    fonts = [
-        f.name for f in font_manager.fontManager.ttflist if "Noto Sans CJK JP" in f.name
-    ]
-    if not fonts:
-        raise RuntimeError("グラフの日本語表示には Noto Sans CJK JP が必要です")
-    plt.rcParams.update({"font.family": fonts[0], "svg.fonttype": "path"})
+    if not any(f.name == "Harano Aji Gothic" for f in font_manager.fontManager.ttflist):
+        raise RuntimeError("グラフの日本語表示には Harano Aji Gothic が必要です")
+    plt.rcParams.update({"font.family": "Harano Aji Gothic", "svg.fonttype": "path"})
     figure, axes = plt.subplots(1, 3, figsize=(17, 6), sharex=True)
     for axis, (relative, metrics) in zip(axes, summary["files"].items(), strict=True):
         names = list(metrics)
@@ -239,12 +301,21 @@ def chart(summary, output):
         axis.set_title(Path(relative).name)
         axis.set_xlabel("本家 / Leansail（対数軸、1 より大きいと短縮）")
         axis.grid(axis="x", alpha=0.2)
-        axis.legend(loc="lower right", fontsize=9)
+    figure.legend(
+        *axes[0].get_legend_handles_labels(),
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.94),
+        ncols=2,
+    )
     figure.suptitle("公式 Lean 4.35.0 と Leansail：解析・索引準備後の要求")
     figure.text(
         0.5,
         0.015,
-        "helios / Mathlib v4.35.0 / 各 5 セッション / 初回 5 標本・反復 50 標本 / 外部 CPU 上限 0.75 cores",
+        "helios / Mathlib v4.35.0 / "
+        f"各 {summary['counts']['upstream']['documents']['accepted']} セッション / "
+        f"初回 {summary['files'][FILES[0]]['ハイライト初回']['upstream']['samples']} 標本・"
+        f"反復 {summary['files'][FILES[0]]['ハイライト反復']['upstream']['samples']} 標本 / "
+        "外部 CPU 上限 0.75 cores",
         ha="center",
         fontsize=10,
     )
@@ -258,6 +329,7 @@ def main():
     parser.add_argument("source", type=Path)
     parser.add_argument("--prime", type=Path, required=True)
     parser.add_argument("--index", type=Path, required=True)
+    parser.add_argument("--diagnostics-reference", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--markdown", type=Path, required=True)
     parser.add_argument("--chart", type=Path, required=True)
@@ -266,7 +338,15 @@ def main():
     prime = json.loads(args.prime.read_text())
     index = json.loads(args.index.read_text())
     summary = summarize(source, index, prime)
-    result = {"summary": summary, "measurement": source, "index": index, "prime": prime}
+    reference = json.loads(args.diagnostics_reference.read_text())
+    summary["diagnostic_equivalence"] = diagnostics(source, reference, summary)
+    result = {
+        "summary": summary,
+        "measurement": source,
+        "index": index,
+        "prime": prime,
+        "diagnostic_reference": reference,
+    }
     serialized = json.dumps(result, ensure_ascii=False, indent=2)
     for path, replacement in [
         (str(ROOT), "<repo>"),

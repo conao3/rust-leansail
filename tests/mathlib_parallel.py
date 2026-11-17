@@ -28,6 +28,8 @@ class TimedClient(Client):
 def parallel_session(args, label, command, repetition):
     environment = dict(os.environ)
     environment.pop("LEAN_WORKER_PATH", None)
+    if args.index_cache_dir:
+        environment["LEANSAIL_INDEX_CACHE_DIR"] = str(args.index_cache_dir)
     client = TimedClient(command, environment)
     monitor = Monitor(client.process.pid, pss=True)
     result = {

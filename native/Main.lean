@@ -2,6 +2,7 @@ import Lean.Server.Watchdog
 import Lean.Server.FileWorker
 import LeansailTrace
 import LeansailIndex
+import LeansailCompletion
 
 open Lean Lean.Server Lean.Server.RequestM
 
@@ -168,6 +169,10 @@ def profileRequest (method : String)
 
 def installHandlers (useCache : Bool) : IO Unit := do
   if useCache then
+    let method := "textDocument/completion"
+    let some original ← lookupLspRequestHandler method
+      | throw <| IO.userError s!"上流ハンドラーが見つかりません: {method}"
+    requestHandlers.modify (·.insert method { original with handle := Leansail.Completion.handleCompletion })
     let method := "textDocument/documentHighlight"
     let some original ← lookupLspRequestHandler method
       | throw <| IO.userError s!"Missing upstream handler: {method}"

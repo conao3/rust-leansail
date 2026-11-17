@@ -82,6 +82,7 @@ def build_backend():
         "LeansailTrace.lean",
         "LeansailIndex.lean",
         "LeansailSymbols.lean",
+        "LeansailCompletion.lean",
         "lakefile.toml",
     ]:
         source = ROOT / "native" / name
@@ -291,6 +292,8 @@ def fixture(path):
 def session(args, label, command, repetition):
     environment = dict(os.environ)
     environment.pop("LEAN_WORKER_PATH", None)
+    if args.index_cache_dir:
+        environment["LEANSAIL_INDEX_CACHE_DIR"] = str(args.index_cache_dir)
     if args.profile:
         environment["LEAN_LS_PROFILE"] = str(
             (args.output.parent / f"{label}-{repetition}").resolve()
@@ -405,10 +408,28 @@ def session(args, label, command, repetition):
                 entry["response_hashes"][method] = hashlib.sha256(
                     json.dumps(response, sort_keys=True, ensure_ascii=False).encode()
                 ).hexdigest()
+                values = []
+                for _ in range(args.samples):
+                    repeated, elapsed = request(method, params)
+                    if method == "textDocument/completion":
+                        assert repeated == response, (relative, method)
+                    values.append(elapsed)
                 entry["requests"][method] = {
                     "first_ms": first,
-                    **stats([request(method, params)[1] for _ in range(args.samples)]),
+                    **stats(values),
                 }
+                if method == "textDocument/completion":
+                    resolved = [
+                        request("completionItem/resolve", item)[0]
+                        for item in response["items"]
+                        if item["label"] == "twice"
+                    ]
+                    assert resolved, relative
+                    entry["completion_resolved_sha256"] = hashlib.sha256(
+                        json.dumps(
+                            resolved, sort_keys=True, ensure_ascii=False
+                        ).encode()
+                    ).hexdigest()
             version = 1
             for kind, edit_position in [("tail", goal), ("early", early)]:
                 values = []

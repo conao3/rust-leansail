@@ -112,6 +112,10 @@ def build_backend(source_dir=None, target=None, watchdog_transform=None):
         (target / "LeansailSymbols.lean").write_bytes(
             (source_dir / "LeansailSymbols.lean").read_bytes()
         )
+    if (source_dir / "LeansailCompletion.lean").exists():
+        (target / "LeansailCompletion.lean").write_bytes(
+            (source_dir / "LeansailCompletion.lean").read_bytes()
+        )
     (target / "lakefile.toml").write_text(
         (source_dir / "lakefile.toml").read_text()
         + '\n[[lean_lib]]\nname = "BenchWatchdog"\n\n[[lean_lib]]\nname = "BenchFileWorker"\n'

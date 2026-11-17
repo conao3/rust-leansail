@@ -73,7 +73,7 @@ The cache theorems protect the stored index identity:
 `.leanfran/cache/` from the embedded Lean blocks. Commit these generated files
 with their source. The source-path hash identifies each generated module.
 
-`audit/` is a separate Lake package using Lean 4.35.0 and lean-assay pinned in its
+`audit/` is a separate Lake package using Lean 4.35.0 and leanassay pinned in its
 manifest. Each embedded block has its own audit module because the blocks share
 `namespace model`. Its targets are `transition`, `refreshCapability`,
 `registrationAllowed`, `decide`, `restartWorker`, `responseDecision` and `cacheValid`.

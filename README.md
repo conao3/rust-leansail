@@ -202,7 +202,7 @@ The native Watchdog manages per-file workers. This boundary stays in place based
 - **Real editors.** `make check-editors` drives pinned Emacs / Eglot and Neovim through startup, diagnostics, hover, go to definition, completion, goal display, continuous typing, close and reopen, and exit, and compares the results with upstream.
 - **LSP conformance.** The [lsp-touchstone](https://github.com/conao3/rust-lsp-touchstone) strict client checks a real session with 0 errors and 0 warnings on both sides.
 - **Cancellation and fault recovery.** Tests kill real FileWorker and Watchdog processes and check that Leansail reports the right errors and recovers the worker.
-- **Proofs.** `make check` checks 29 leanfran theorems, their audit with lean-assay, and 6 native backend equivalence theorems.
+- **Proofs.** `make check` checks 29 leanfran theorems, their audit with leanassay, and 6 native backend equivalence theorems.
 
 [docs/verification.md](docs/verification.md) has the commands, result files, the editor comparison table, error codes and the lsp-touchstone findings. [docs/acceptance.md](docs/acceptance.md) has the per-entry protocol results.
 
@@ -222,7 +222,7 @@ nix develop --command make check
 nix build
 ```
 
-`audit/` runs [lean-assay](https://github.com/conao3/lean-assay) on the generated functions called by Rust. `make check` fails when a mutant changes a tested result while satisfying every theorem, when a theorem's hypotheses receive no satisfying input, or when a function has no theorem that refutes a mutant.
+`audit/` runs [leanassay](https://github.com/conao3/lean-leanassay) on the generated functions called by Rust. `make check` fails when a mutant changes a tested result while satisfying every theorem, when a theorem's hypotheses receive no satisfying input, or when a function has no theorem that refutes a mutant.
 
 `make check` builds the native backend and the Rust host, then runs format, Clippy, the Lean theorems, Rust unit tests, regression checks, `make check-acceptance` and `make check-editors`. CI runs `make check`, `nix build` and `make check-protocol`. `make bench-mathlib` and the other `bench-mathlib-*` targets measure performance on Mathlib; see [docs/mathlib-benchmark.md](docs/mathlib-benchmark.md).
 

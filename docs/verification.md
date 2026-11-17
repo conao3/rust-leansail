@@ -19,7 +19,7 @@ CI runs `make check`, `nix build` and `make check-protocol`. Since `make check` 
 `make check` builds the native backend and the Rust host, then runs:
 
 - format checks and Clippy
-- 29 leanfran theorems, their audit with lean-assay (`lake -d audit build --wfail`), and 6 native backend equivalence theorems
+- 29 leanfran theorems, their audit with leanassay (`lake -d audit build --wfail`), and 6 native backend equivalence theorems
 - 9 Rust unit tests
 - 5 capability communication test cases
 - regression checks for the existing 11 request kinds, plus edits, UTF-16 and multiple files

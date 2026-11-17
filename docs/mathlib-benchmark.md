@@ -62,6 +62,149 @@ nix develop --command make bench-mathlib \
   BENCH_ARGS="--prepare --toolchain $toolchain_prefix --before-backend target/mathlib-before-backend/.lake/build/bin/leansail-backend --server upstream --server before --server leansail --samples 10 --repetitions 5 --edits 2 --wait-idle --resume --output target/mathlib-remeasure.json"
 ```
 
+## 補完
+
+`textDocument/completion` は native Lean 内で、import した定数（ヘッダー宣言）の検索結果を worker ごとに 1 件再利用する。補完文字列、現在の名前空間、除外を含む `open`、モジュール名、末尾のドットを照合し、上流と同じ順序の宣言名と表示名を保持する。ローカル宣言、局所変数、別名、キーワード、名前空間は各要求の環境から計算し、URI、位置、補完情報の番号を付けて返す。`reuseHeaderMatches_eq` が検索結果の再利用と再計算の同値性を検査する。
+
+改善前は `ddd558d`、改善後は [`9025a84`](https://github.com/conao3/rust-leansail/commit/9025a84715cd01400f838b4263506177f2399c97)。公式 Lean 4.35.0、Mathlib v4.35.0、helios の同じ release host を使う。両 backend の永続索引を準備してから、通常計測と 3 文書の並列解析を改善前後で各 5 セッション採用する。外部 CPU の上限は開始前の 2 秒間とセッション中の平均で 0.75 cores。他セッションのプロセスを維持し、除外と見送りを保存して不足分を `--resume` で再開する。[補完の集計と全標本](https://github.com/conao3/rust-leansail/blob/master/docs/mathlib-completion-results.json) が実行ファイルの SHA-256、採用判定、要求時間、応答の hash を持つ。
+
+### 通常計測
+
+値は中央値 / p95（ms）。解析完了後の初回は各文書 5 標本、反復は各文書 15 標本である。各セッションで初回と後続 3 回を分ける。
+
+| 文書                    |        改善前・初回 |       改善後・初回 |      改善前・反復 |     改善後・反復 |
+| ----------------------- | ------------------: | -----------------: | ----------------: | ---------------: |
+| IntegralEqImproper.lean |  981.382 / 1057.237 |  913.456 / 969.452 | 322.921 / 355.756 |  70.225 / 75.580 |
+| FiniteDimension.lean    |  969.839 / 1000.259 |  841.340 / 862.009 | 286.276 / 351.625 | 60.254 / 247.513 |
+| Tactic.lean             | 1058.549 / 1101.019 | 997.892 / 1030.294 | 265.261 / 291.478 |  72.636 / 84.768 |
+
+### 並列解析
+
+同じ 3 文書を保持し、積分ファイルの末尾を編集した直後に hover、補完、診断完了を要求する。背景の 2 文書が解析済みの条件と再解析中の条件を交互に各 3 回測る。各条件 5 セッション、15 標本で、値は編集通知から補完受信までの中央値 / p95（ms）。
+
+| 条件           |            改善前 |           改善後 |
+| -------------- | ----------------: | ---------------: |
+| 背景は解析済み | 350.612 / 411.427 | 83.902 / 141.368 |
+| 背景を再解析中 | 404.009 / 549.504 | 92.070 / 108.758 |
+
+### 採用と除外
+
+通常計測と並列解析の改善前後は各 5 回が揃う。素の Lean は応答の照合にも使い、速度の標本は各 5 回に不足するため「未計測」とする。段階計測は通常と並列を改善前後で各 1 セッション実行し、速度比較の標本と分ける。
+
+| 計測        | 構成                    | 採用 | 負荷除外 | 開始前の見送り | 中断 | 状態     |
+| ----------- | ----------------------- | ---: | -------: | -------------: | ---: | -------- |
+| 通常        | 素の Lean（応答照合用） |    3 |        1 |             11 |    0 | 未計測   |
+| 通常        | 改善前                  |    5 |        0 |              7 |    0 | 計測済み |
+| 通常        | 改善後                  |    5 |        3 |             10 |    0 | 計測済み |
+| 並列        | 素の Lean（応答照合用） |    1 |        7 |             13 |    0 | 未計測   |
+| 並列        | 改善前                  |    5 |        0 |             13 |    0 | 計測済み |
+| 並列        | 改善後                  |    5 |        2 |             17 |    0 | 計測済み |
+| 段階 / 通常 | 改善前                  |    1 |        1 |              3 |    0 | 計測済み |
+| 段階 / 通常 | 改善後                  |    1 |        0 |              0 |    0 | 計測済み |
+| 段階 / 並列 | 改善前                  |    1 |        0 |              0 |    0 | 計測済み |
+| 段階 / 並列 | 改善後                  |    1 |        0 |              1 |    0 | 計測済み |
+
+### 段階の内訳
+
+通常の段階計測は 3 文書の反復 9 標本、各セルは経過時間の中央値（ms）である。改善前の計測用 backend は、列挙、照合、候補の構築を中間配列で分離する。元のループとキャンセル判定を使う通常計測とは実行する処理が異なるため、速度の短縮率は通常計測の表から評価する。JSON は上流の `compressFast` で直接生成し、JSON 化と直列化を一つの段階で測る。
+
+| 段階                                     |          改善前 ms |        改善後 ms |
+| ---------------------------------------- | -----------------: | ---------------: |
+| 構文木と InfoTree の取得待ち             |              0.373 |            0.345 |
+| 優先パーティションの選択                 |              0.041 |            0.041 |
+| 全定数の列挙                             |             18.036 | 検索結果を再利用 |
+| 名前空間・open・部分列の照合             |            195.344 | 検索結果を再利用 |
+| 検索結果キャッシュの参照                 |             対象外 |            0.021 |
+| 候補の属性取得と構築（改善後はヘッダー） |              6.707 |            7.976 |
+| ローカル宣言の照合と候補構築             | 全定数の段階に含む |            0.356 |
+| 別名                                     |              0.510 |            0.535 |
+| キーワード                               |              0.020 |            0.019 |
+| 名前空間の候補生成                       |             20.322 |           20.755 |
+| 候補配列の結合                           |              0.125 |            0.127 |
+| 重複の除去                               |              1.932 |            1.934 |
+| JSON の直接生成と直列化                  |             10.535 |           10.151 |
+| backend 合計                             |            248.006 |           42.375 |
+| 転送とクライアント処理                   |             28.010 |           26.795 |
+| 要求往復                                 |            276.152 |           69.864 |
+
+構文木と InfoTree の取得待ちは、elaboration の完了待ちと task の実行待ちを含む。転送とクライアント処理は同じ標本の要求往復から backend 内の時間を引いた値で、Watchdog、Rust host、OS、クライアントの JSON 読取、計測境界の費用を含む。各段階の中央値は別々の標本の順位で決まるため、中央値同士を加算して合計時間とはしない。
+
+解析完了後の初回補完では、ヘッダーの種類とタグの表の準備が 637.568 / 659.405 ms、改善後の最初の名前照合が 172.136 ms を要する。補完文字列や `open` などのキーが変わると名前の照合を再計算する。サーバーは部分列の照合、補完情報の優先パーティションの選択、重複除去を行い、上流の列挙順で全候補を返す。
+
+型の pretty print とドキュメントは上流の `completionItem/resolve` が生成する。初回の補完が作る種類とタグの表は、型の表示とは別の処理である。`twice` の解決は 3 文書の各 1 標本で、値は中央値（ms）。
+
+| resolve の段階               | 改善前 ms | 改善後 ms |
+| ---------------------------- | --------: | --------: |
+| 構文木と InfoTree の取得待ち |     0.367 |     0.355 |
+| 補完情報の選択               |     0.042 |     0.043 |
+| 型の pretty print            |     0.602 |     0.644 |
+| ドキュメントの生成           |     0.049 |     0.050 |
+| JSON の生成と直列化          |     0.023 |     0.023 |
+| 要求往復                     |     1.989 |     2.134 |
+
+並列の段階計測は積分ファイルの各条件 3 標本。以下は要求を送ってからの経過時間の中央値（ms）であり、編集通知を始点とする速度比較の表と区別する。
+
+| 条件           | 改善前・取得待ち | 改善後・取得待ち | 改善前 backend | 改善後 backend | 改善前・往復 | 改善後・往復 |
+| -------------- | ---------------: | ---------------: | -------------: | -------------: | -----------: | -----------: |
+| 背景は解析済み |            4.203 |            3.543 |        350.289 |         51.392 |      387.618 |       89.262 |
+| 背景を再解析中 |            3.907 |            3.603 |        378.147 |         52.952 |      440.899 |       88.417 |
+
+### 一致と改善余地
+
+`tests/completion.py` は 14 箇所、のべ 7,210 候補の全項目を、通常、編集後、再オープン後の各状態で解決する。名前空間、`hiding`、明示的な `open`、別名、private 宣言、局所変数、Unicode を含み、件数、順序、初回の内容、解決後の内容が上流と一致する。Mathlib は採用と負荷除外を含む全完走試行の補完と `twice` の解決を照合する。オブジェクトのキーを整列し、配列の順序を保った JSON の hash が一致する。段階計測用 backend も通常計測の応答と一致する。
+
+解析済み文書の反復補完は、改善後も名前空間の候補生成に 20.755 ms、JSON に 10.151 ms、転送とクライアント処理に 26.795 ms を要する。InfoTree の取得待ちは 0.345 ms、背景の再解析中でも 3.603 ms である。初回の属性表と新しいキーの照合を含め、サーバー層の改善余地が残る。残りの大半が elaboration であるという結論は、この計測からは得られない。採用する改善は native Lean の検索結果の再利用で、Rust host は既存の frame 転送と leanfran の規則を担当する。
+
+有限次元ファイルの反復 p95 標本の段階内訳は、通常計測に段階ログを重ねていないため未特定である。全標本を集計に含める。
+
+### 補完の再現手順
+
+公式 toolchain の root を `toolchain_prefix` に指定する。改善後のソースは上記の commit で固定できる。各 backend の索引の保存完了を確認してから、以下の通常計測を行う。準備の時間は比較の標本に含めない。
+
+```bash
+implementation=9025a84715cd01400f838b4263506177f2399c97
+for variant in before after profile-before profile-after; do
+  revision="$implementation"
+  profile_args=()
+  case "$variant" in
+    before|profile-before) revision=ddd558d ;;
+  esac
+  case "$variant" in
+    profile-*) profile_args=(--profile) ;;
+  esac
+  nix develop --command python3 tests/mathlib_completion_profile.py \
+    --toolchain "$toolchain_prefix" --revision "$revision" \
+    --output "target/completion-$variant" "${profile_args[@]}"
+  nix develop --command python3 tests/mathlib_index_prime.py \
+    --toolchain "$toolchain_prefix" \
+    --backend "target/completion-$variant/.lake/build/bin/leansail-backend" \
+    --index-cache-dir target/completion-cache --server leansail \
+    --samples 1 --repetitions 1 --wait-idle \
+    --output "target/completion-prime-$variant.json"
+done
+for scenario in normal parallel; do
+  script=tests/mathlib.py
+  if [ "$scenario" = parallel ]; then script=tests/mathlib_parallel.py; fi
+  nix develop --command python3 "$script" --toolchain "$toolchain_prefix" \
+    --backend target/completion-after/.lake/build/bin/leansail-backend \
+    --before-backend target/completion-before/.lake/build/bin/leansail-backend \
+    --server upstream --server before --server leansail \
+    --index-cache-dir target/completion-cache --samples 3 --repetitions 5 \
+    --edits 2 --wait-idle --max-attempts 5 --retry-delay 10 \
+    --continue-incomplete --resume --output "target/completion-$scenario.json"
+done
+```
+
+段階計測は `tests/mathlib_completion_stages.py` に `--backend target/completion-profile-after/.lake/build/bin/leansail-backend --before-backend target/completion-profile-before/.lake/build/bin/leansail-backend --server before --server leansail --repetitions 1` を渡す。その他の条件は同じとし、`--parallel` を付けて並列の段階を測る。出力は `target/completion-profile.json` と `target/completion-parallel-profile.json` に分ける。集計は次のコマンドで行う。
+
+```bash
+nix develop --command python3 tests/mathlib_completion_report.py \
+  --normal target/completion-normal.json --parallel target/completion-parallel.json \
+  --profile target/completion-profile.json \
+  --parallel-profile target/completion-parallel-profile.json \
+  --output target/completion-summary.json
+```
+
 ## 並列解析と PSS
 
 ```bash
@@ -390,7 +533,9 @@ nix develop --command python3 tests/mathlib_startup_report.py \
 | worker:Tactic.lean                                    | 1676.3   | 1690.6 | 1687.9 |
 | worker:Topology/Algebra/Module/FiniteDimension.lean   | 1594.6   | 1608.1 | 1611.8 |
 
-## 並列解析の結果
+## .ilean 方式の worker 比較
+
+この節は `.ilean` から索引を構築する文書索引と semantic tokens の構成を対象とする。補完の現行の結果は「補完」の表を参照する。
 
 ホストは helios。同じ 3 文書を同時に開き、積分を編集中の文書にする。全 3 文書を保持したまま、背景が解析済みの条件と、有限次元空間と Tactic を再解析する条件を交互に各 10 回測る。hover と補完の初回要求は別に記録する。各構成 5 セッション、各条件 50 標本で、全ての hover と補完の応答本文が一致する。
 
@@ -436,7 +581,7 @@ nix develop --command python3 tests/mathlib_startup_report.py \
 
 プロジェクト索引は native Lean の永続領域を読み込み、Watchdog 内の全 worker と、同じ領域を読むセッションで共有する。準備時間・PSS・応答の比較は「起動とプロジェクト索引」の計測値を使う。並列解析の表は `.ilean` 方式の worker 管理の判断に用いる条件である。
 
-## プロファイル
+## 文書索引の CPU 費用
 
 ```bash
 nix shell nixpkgs#perf --command nix develop --command python3 tests/mathlib.py \

@@ -202,7 +202,7 @@ The native Watchdog manages per-file workers. This boundary stays in place based
 - **Real editors.** `make check-editors` drives pinned Emacs / Eglot and Neovim through startup, diagnostics, hover, go to definition, completion, goal display, continuous typing, close and reopen, and exit, and compares the results with upstream.
 - **LSP conformance.** The [lsp-touchstone](https://github.com/conao3/rust-lsp-touchstone) strict client checks a real session with 0 errors and 0 warnings on both sides.
 - **Cancellation and fault recovery.** Tests kill real FileWorker and Watchdog processes and check that Leansail reports the right errors and recovers the worker.
-- **Proofs.** `make check` checks 21 leanfran theorems and 6 native backend equivalence theorems.
+- **Proofs.** `make check` checks 29 leanfran theorems, their audit with lean-assay, and 6 native backend equivalence theorems.
 
 [docs/verification.md](docs/verification.md) has the commands, result files, the editor comparison table, error codes and the lsp-touchstone findings. [docs/acceptance.md](docs/acceptance.md) has the per-entry protocol results.
 

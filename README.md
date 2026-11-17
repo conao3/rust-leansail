@@ -222,6 +222,8 @@ nix develop --command make check
 nix build
 ```
 
+`audit/` runs [lean-assay](https://github.com/conao3/lean-assay) on the generated functions called by Rust. `make check` fails when a mutant changes a tested result while satisfying every theorem, when a theorem's hypotheses receive no satisfying input, or when a function has no theorem that refutes a mutant.
+
 `make check` builds the native backend and the Rust host, then runs format, Clippy, the Lean theorems, Rust unit tests, regression checks, `make check-acceptance` and `make check-editors`. CI runs `make check`, `nix build` and `make check-protocol`. `make bench-mathlib` and the other `bench-mathlib-*` targets measure performance on Mathlib; see [docs/mathlib-benchmark.md](docs/mathlib-benchmark.md).
 
 When you change Lean definitions, commit `lean/` and `.leanfran/cache/` together. The pinned leanfran of the development environment generates them, and Rust builds that use the cache read the generated code.

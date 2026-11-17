@@ -10,6 +10,7 @@ check: build
 	ruff format --check tests
 	cargo clippy --all-targets -j 4 -- -D warnings
 	lake -d lean build
+	lake -d audit build --wfail
 	cargo test -j 4
 	python3 tests/mathlib_upstream_report_test.py
 	python3 tests/index_cache.py

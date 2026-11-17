@@ -30,18 +30,23 @@ leanfran::lean! {
         | some _ => if declared then .forward else .acknowledge
         | none => .forward
 
-    theorem refresh_requires_support (method path : String)
-        (h : refreshCapability method = some path)
-        (hr : (method == "client/registerCapability") = false) (declared : Bool)
-        (registrationsAllowed : Bool) :
-        decide method declared registrationsAllowed = .forward ↔ declared = true := by
-      cases declared <;> simp [decide, hr, h]
+    theorem refresh_requires_support (declared registrationsAllowed : Bool) :
+        (decide "workspace/semanticTokens/refresh" declared registrationsAllowed = .forward ↔ declared = true) ∧
+        (decide "workspace/inlayHint/refresh" declared registrationsAllowed = .forward ↔ declared = true) ∧
+        (decide "workspace/codeLens/refresh" declared registrationsAllowed = .forward ↔ declared = true) ∧
+        (decide "workspace/inlineValue/refresh" declared registrationsAllowed = .forward ↔ declared = true) ∧
+        (decide "workspace/diagnostic/refresh" declared registrationsAllowed = .forward ↔ declared = true) ∧
+        (decide "workspace/foldingRange/refresh" declared registrationsAllowed = .forward ↔ declared = true) := by
+      cases declared <;> simp [decide, refreshCapability]
 
-    theorem unsupported_refresh_is_acknowledged (method path : String)
-        (h : refreshCapability method = some path)
-        (hr : (method == "client/registerCapability") = false) (registrationsAllowed : Bool) :
-        decide method false registrationsAllowed = .acknowledge := by
-      simp [decide, hr, h]
+    theorem unsupported_refresh_is_acknowledged (registrationsAllowed : Bool) :
+        decide "workspace/semanticTokens/refresh" false registrationsAllowed = .acknowledge ∧
+        decide "workspace/inlayHint/refresh" false registrationsAllowed = .acknowledge ∧
+        decide "workspace/codeLens/refresh" false registrationsAllowed = .acknowledge ∧
+        decide "workspace/inlineValue/refresh" false registrationsAllowed = .acknowledge ∧
+        decide "workspace/diagnostic/refresh" false registrationsAllowed = .acknowledge ∧
+        decide "workspace/foldingRange/refresh" false registrationsAllowed = .acknowledge := by
+      simp [decide, refreshCapability]
 
     theorem watched_files_require_dynamic_registration (declared : Bool) :
         registrationAllowed "workspace/didChangeWatchedFiles" declared = declared := by
@@ -56,11 +61,25 @@ leanfran::lean! {
       simp [decide]
 
     theorem unrelated_requests_are_forwarded (method : String)
-        (h : refreshCapability method = none)
+        (h : method ∉ ["workspace/semanticTokens/refresh", "workspace/inlayHint/refresh",
+          "workspace/codeLens/refresh", "workspace/inlineValue/refresh",
+          "workspace/diagnostic/refresh", "workspace/foldingRange/refresh"])
         (hr : (method == "client/registerCapability") = false)
         (declared registrationsAllowed : Bool) :
         decide method declared registrationsAllowed = .forward := by
-      simp [decide, hr, h]
+      simp_all [decide, refreshCapability]
+
+    theorem unrelated_registrations_are_allowed (method : String) (declared : Bool)
+        (h : method ≠ "workspace/didChangeWatchedFiles") :
+        registrationAllowed method declared = true := by
+      simp [registrationAllowed, h]
+
+    theorem refresh_capabilities_are_independent :
+        (["workspace/semanticTokens/refresh", "workspace/inlayHint/refresh",
+          "workspace/codeLens/refresh", "workspace/inlineValue/refresh",
+          "workspace/diagnostic/refresh", "workspace/foldingRange/refresh"].filterMap
+            refreshCapability).Nodup := by
+      decide
     "#
 }
 

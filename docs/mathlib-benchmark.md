@@ -79,9 +79,101 @@ Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子
 
 ## 起動とプロジェクト索引
 
-公式 Lean 4.35.0 と同じ Mathlib を使い、helios で各条件 5 回を採用する。外部 CPU の上限は開始前・実行中とも 0.75 cores。OS のファイルキャッシュを保ち、条件を反復ごとに交互にする。実装は `df0bdf2` の native Lean の索引永続化を含み、実行ファイルの SHA-256、全標本、採用判定、応答の hash は [起動と索引の集計](https://github.com/conao3/rust-leansail/blob/master/docs/mathlib-index-results.json) に保存する。
+公式 Lean 4.35.0 と同じ Mathlib を使い、helios で各条件 5 回を採用する。外部 CPU の上限は開始前・実行中とも 0.75 cores。OS のファイルキャッシュを保ち、条件を反復ごとに交互にする。参照索引の永続化の比較は `df0bdf2` を対象とし、実行ファイルの SHA-256、全標本、採用判定、応答の hash は [起動と索引の集計](https://github.com/conao3/rust-leansail/blob/master/docs/mathlib-index-results.json) に保存する。
 
-`upstream` は公式 `lean --server`、`baseline` は上流のハンドラーを使う計測用 backend の単独起動、`no-cache` は Rust host と `.ilean` からの索引構築、`leansail` は検証済みの永続索引の読み込み、`no-index` はプロジェクト全体の `.ilean` 索引を省く対照である。`no-index` は計測用の条件で、worker が解析した文書の参照情報を保持する。
+`upstream` は公式 `lean --server`、`baseline` は上流のハンドラーを使う計測用 backend の単独起動、`no-cache` は Rust host と `.ilean` からの索引構築、`leansail` は各比較の実行ファイルに対応する検証済み永続索引の読み込み、`no-index` はプロジェクト全体の `.ilean` 索引を省く対照である。`no-index` は計測用の条件で、worker が解析した文書の参照情報を保持する。
+
+### workspace/symbol の検索
+
+`workspace/symbol` は native Lean で module ごとの定義名と UTF-16 の範囲を準備し、参照索引と一緒に永続化する。検索では準備済みの定義だけを走査し、上流の fuzzy match、整列規則、整列後の先頭 1,000 件の選択を適用する。未保存文書とファイル監視の更新は各要求の参照に反映する。キャッシュの再利用が再計算と等しいことを Lean の `reuseDefinitions_eq` で検査する。
+
+改善前は参照索引の永続化を含む `cec5cc6`、改善後は `c7ec746`。helios、公式 Lean 4.35.0、同じ Mathlib v4.35.0、同じ release host を使う。`make bench-mathlib-index` の 3 文書・`aecover_ball` のシナリオで、素の Lean・改善前・改善後を交互に各 5 回採用する。開始前と実行中の外部 CPU の上限は 0.75 cores。改善前後とも cache hit を必須にする。標本、実行ファイルの SHA-256、採用・除外と応答の hash は [検索の集計](https://github.com/conao3/rust-leansail/blob/master/docs/mathlib-symbol-results.json) が持つ。
+
+通常計測の中央値 / p95（ms）。warm は索引と文書の準備後の 3 回のうち後続 2 回で、各文書・各条件 10 標本。短縮率は改善前の中央値に対する割合である。
+
+| 文書                    |    素の Lean warm |       改善前 warm |     改善後 warm | 短縮率 |
+| ----------------------- | ----------------: | ----------------: | --------------: | -----: |
+| IntegralEqImproper.lean | 844.967 / 856.185 | 707.883 / 714.545 | 80.736 / 82.852 |  88.6% |
+| FiniteDimension.lean    | 818.698 / 833.758 | 706.462 / 717.417 | 82.328 / 83.472 |  88.3% |
+| Tactic.lean             | 861.640 / 874.151 | 708.878 / 721.304 | 82.751 / 86.187 |  88.3% |
+
+cold と準備後の初回は各文書・各条件 5 標本である。
+
+| 文書                    |       改善前 cold |     改善後 cold | 改善前・準備後の初回 | 改善後・準備後の初回 |
+| ----------------------- | ----------------: | --------------: | -------------------: | -------------------: |
+| IntegralEqImproper.lean |   38.401 / 39.050 | 39.925 / 40.307 |    704.637 / 724.536 |      83.533 / 84.370 |
+| FiniteDimension.lean    | 734.371 / 737.499 | 88.511 / 90.290 |    714.913 / 715.895 |      84.985 / 93.049 |
+| Tactic.lean             | 737.353 / 748.701 | 89.074 / 91.335 |    714.937 / 718.118 |      83.861 / 86.176 |
+
+積分の cold は両構成とも全 5 回で 0 件の部分結果、準備後の workspace/symbol は全 3 文書・全採用回で 2 件。準備後の workspace/symbol・参照・定義・ハイライトは、返却順序を含む応答本文の hash が素の Lean と一致する。空文字列、大小文字、短い fuzzy query、Unicode、private 名、1,100 件からの上位 1,000 件、未保存文書の編集と close、`.ilean` の変更・削除、永続索引の再読込は `tests/workspace_symbols.py` で上流と比較する。
+
+索引の準備時間の中央値は 5.668 → 5.762 秒、3 文書解析後の Watchdog PSS 中央値は 457.1 → 484.0 MiB、全プロセス PSS 中央値は 2940.7 → 2967.8 MiB。payload は 396.8 → 420.7 MiB で、検索用データの保持量も含む。
+
+段階計測は通常計測と分け、改善前後を交互に各 5 セッション、計 30 warm 標本ずつ採用する。約 131 万件の参照に約 40.8 万件の定義がある。表示名は `String → Name → privateToUserName? → String` の規則で作る。改善前の計測用 handler は走査・名前変換・照合を分けるための中間配列を確保する。この配列とトレースの費用を含むため、通常計測との時間の差も区別する。
+
+| 段階                          |            改善前 ms |          改善後 ms |
+| ----------------------------- | -------------------: | -----------------: |
+| module の参照表の構築         |        4.790 / 4.904 |      4.911 / 5.154 |
+| 全参照の走査と定義の抽出      |    136.280 / 146.723 | 索引の準備時に実行 |
+| 表示名の変換                  |    568.832 / 587.070 | 索引の準備時に実行 |
+| 準備済みの定義の参照・更新    | 走査・名前変換に含む |      8.757 / 9.858 |
+| fuzzy match                   |      62.208 / 64.778 |    68.517 / 72.046 |
+| 順位付けと先頭 1,000 件の選択 |        0.047 / 0.051 |      0.043 / 0.052 |
+| 結果の位置と構造体の生成      |        0.013 / 0.021 |      0.013 / 0.019 |
+| JSON の構築                   |        0.019 / 0.020 |      0.017 / 0.019 |
+| JSON の直列化                 |        0.023 / 0.033 |      0.023 / 0.031 |
+| backend の書き出し            |        0.016 / 0.023 |      0.016 / 0.024 |
+| クライアント往復の残り        |        0.599 / 0.714 |      0.581 / 0.629 |
+| クライアント往復の全体        |    774.097 / 802.909 |    82.862 / 86.801 |
+
+「クライアント往復の残り」は、同じ標本のクライアント応答時間から backend 内の段階計測の合計を引いた値である。Rust の転送、OS の待機、クライアントの受信と JSON 読取、トレースの境界の費用を含む推定値として扱う。表示名の変換と全参照の走査が主な改善対象で、現行の照合と順位付けは native Lean の上流実装を使う。
+
+| 条件              | 採用 | 負荷除外 | 開始前の見送り | 中断 |
+| ----------------- | ---: | -------: | -------------: | ---: |
+| 通常 / 素の Lean  |    5 |        0 |              1 |    0 |
+| 通常 / 改善前     |    5 |        1 |              1 |    0 |
+| 通常 / 改善後     |    5 |        1 |              0 |    0 |
+| 段階計測 / 改善前 |    5 |        2 |              0 |    0 |
+| 段階計測 / 改善後 |    5 |        0 |              0 |    0 |
+
+全条件で各 5 回が揃う。文書の elaboration を待つ cold の定義・ハイライトは文書解析の待ち時間として扱う。
+
+#### 検索の再現手順
+
+`toolchain_prefix` は「再現手順」で取得した公式 toolchain の root とする。まず通常計測の backend を作り、各実行ファイルの索引を準備する。`before` は参照索引の永続化を含む比較条件である。
+
+```bash
+nix develop --command python3 tests/mathlib_symbols_profile.py \
+  --toolchain "$toolchain_prefix" --revision cec5cc6 \
+  --output target/symbol-before
+nix develop --command python3 tests/mathlib_trace.py --toolchain "$toolchain_prefix"
+for variant in before after; do
+  if [ "$variant" = before ]; then
+    backend=target/symbol-before/.lake/build/bin/leansail-backend
+  else
+    backend=target/mathlib-trace-backend/.lake/build/bin/leansail-backend
+  fi
+  nix develop --command make bench-mathlib-index-prime \
+    BENCH_ARGS="--toolchain $toolchain_prefix --backend $backend --server leansail --index-cache-dir target/symbol-cache --repetitions 1 --wait-idle --output target/symbol-prime-$variant.json"
+done
+nix develop --command make bench-mathlib-index \
+  BENCH_ARGS="--toolchain $toolchain_prefix --backend target/mathlib-trace-backend/.lake/build/bin/leansail-backend --before-backend target/symbol-before/.lake/build/bin/leansail-backend --server upstream --server before --server leansail --index-cache-dir target/symbol-cache --require-cache-hit --samples 3 --repetitions 5 --wait-idle --resume --output target/symbol-comparison.json"
+```
+
+段階計測用には、次の 2 つの backend を作る。それぞれに同じ `bench-mathlib-index-prime` を実行して索引を準備する。
+
+```bash
+nix develop --command python3 tests/mathlib_symbols_profile.py \
+  --toolchain "$toolchain_prefix" --revision cec5cc6 --profile \
+  --output target/symbol-profile-before
+nix develop --command python3 tests/mathlib_symbols_profile.py \
+  --toolchain "$toolchain_prefix" --profile --output target/symbol-profile-after
+nix develop --command make bench-mathlib-index \
+  BENCH_ARGS="--toolchain $toolchain_prefix --backend target/symbol-profile-after/.lake/build/bin/leansail-backend --before-backend target/symbol-profile-before/.lake/build/bin/leansail-backend --server before --server leansail --symbol-profile --index-cache-dir target/symbol-cache --require-cache-hit --samples 3 --repetitions 5 --wait-idle --resume --output target/symbol-profile.json"
+nix develop --command python3 tests/mathlib_symbols_report.py \
+  target/symbol-comparison.json --profile target/symbol-profile.json \
+  --output target/symbol-summary.json
+```
 
 ### 起動の段階
 
@@ -89,28 +181,28 @@ Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子
 
 下表は Leansail の `.ilean` 方式の中央値で、単位は ms。初期化後の PSS 採取も、クライアントが `didOpen` を送るまでの時刻に含む。中央値どうしの差を処理時間とする代わりに、各回の差を別に集計する。
 
-| 段階 | 起動からの時刻 ms |
-|---|---:|
-| host の主ループ | 1.346 |
-| backend の spawn 完了 | 1.859 |
-| backend の main | 37.459 |
-| initialize 応答の受信 | 38.247 |
-| didOpen の backend への転送 | 56.811 |
-| worker の spawn 開始 | 59.030 |
-| worker の受付開始 | 94.745 |
-| Lake setup の開始 / 完了 | 97.669 / 1,454.436 |
-| import の開始 / 完了 | 1,454.556 / 2,641.304 |
-| 最初の publishDiagnostics（空を含む） | 298.338 |
-| 最初の非空 publishDiagnostics | 6,688.016 |
+| 段階                                  |     起動からの時刻 ms |
+| ------------------------------------- | --------------------: |
+| host の主ループ                       |                 1.346 |
+| backend の spawn 完了                 |                 1.859 |
+| backend の main                       |                37.459 |
+| initialize 応答の受信                 |                38.247 |
+| didOpen の backend への転送           |                56.811 |
+| worker の spawn 開始                  |                59.030 |
+| worker の受付開始                     |                94.745 |
+| Lake setup の開始 / 完了              |    97.669 / 1,454.436 |
+| import の開始 / 完了                  | 1,454.556 / 2,641.304 |
+| 最初の publishDiagnostics（空を含む） |               298.338 |
+| 最初の非空 publishDiagnostics         |             6,688.016 |
 
 ハンドラーの追加初期化は 0.022 ms、Lake setup は 1,356.767 ms、import は 1,190.270 ms。ハイライトと semantic tokens のキャッシュの構築は、対応する要求の受付時に行う。
 
-| 条件 | 最初の非空診断の中央値 / p95 ms |
-|---|---:|
-| 素の Lean | 6681.644 / 6745.835 |
-| 上流ハンドラーの backend 単独 | 6670.366 / 6693.101 |
-| Leansail・.ilean | 6688.016 / 6746.991 |
-| 索引を省く対照 | 6332.783 / 6504.002 |
+| 条件                          | 最初の非空診断の中央値 / p95 ms |
+| ----------------------------- | ------------------------------: |
+| 素の Lean                     |             6681.644 / 6745.835 |
+| 上流ハンドラーの backend 単独 |             6670.366 / 6693.101 |
+| Leansail・.ilean              |             6688.016 / 6746.991 |
+| 索引を省く対照                |             6332.783 / 6504.002 |
 
 素の Lean と Leansail の組ごとの差の中央値は +6.372 ms、5 組の中央値の bootstrap 95% 区間は −40.048〜+65.487 ms である。約 0.57 秒の固定した遅延は再現しない。6.903 秒と 7.469 秒は二つの Leansail 条件の中央値で、対応する素の Lean は 6.732 秒だった。この二つの Leansail 条件でも、組ごとの差の中央値は 95.1 ms である。段階ログと初期化の費用は、中央値の差を追加キャッシュの初期化コストとみなす根拠を示していない。当該 5 回の各段階への帰属は、その時の段階ログが揃わないため未特定である。
 
@@ -118,18 +210,20 @@ Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子
 
 ### 索引の準備と保持量
 
+この節の保持量・要求時間・セッション間共有は、参照索引だけを保存する `df0bdf2` の条件である。定義名と範囲を含む `c7ec746` の保持量と要求時間は「workspace/symbol の検索」が持つ。
+
 依存プロジェクトの `.ilean` 9,049 本と公式 toolchain の 2,546 本、計 11,595 本（366.1 MiB）を対象にする。上流はこれらを Watchdog が非同期に読み込み、全 worker に共有する。永続化では同じ索引を Lean の compacted region に保存し、次のセッションで読み込む。ディスク上の payload は 396.8 MiB。
 
 各条件 5 セッション。下表の時間は中央値 / p95、メモリは 3 文書の解析と要求が済んだ同時点の中央値である。全プロセスの PSS は各標本で合算してから集計する。
 
-| 対象 | .ilean 方式 | 永続索引 |
-|---|---:|---:|
+| 対象                                  |           .ilean 方式 |            永続索引 |
+| ------------------------------------- | --------------------: | ------------------: |
 | 起動からプロジェクト索引の準備完了 ms | 22811.288 / 22910.577 | 5616.544 / 5640.721 |
-| 最初の文書と索引の準備完了 ms | 22811.717 / 22910.963 | 7822.702 / 7945.663 |
-| 最初の非空診断 ms | 6733.733 / 6788.132 | 6717.351 / 6756.275 |
-| Watchdog PSS MiB | 1169.9 | 456.5 |
-| Rust host PSS MiB | 1.8 | 1.8 |
-| 全プロセス PSS MiB | 3610.7 | 2937.5 |
+| 最初の文書と索引の準備完了 ms         | 22811.717 / 22910.963 | 7822.702 / 7945.663 |
+| 最初の非空診断 ms                     |   6733.733 / 6788.132 | 6717.351 / 6756.275 |
+| Watchdog PSS MiB                      |                1169.9 |               456.5 |
+| Rust host PSS MiB                     |                   1.8 |                 1.8 |
+| 全プロセス PSS MiB                    |                3610.7 |              2937.5 |
 
 索引の準備を 17.204 秒（75.4%）、Watchdog の PSS を 713.4 MiB（61.0%）縮める。全プロセスの保持 PSS は 18.6% 減る。非空診断の組ごとの差の中央値は −17.3 ms、bootstrap 95% 区間は −70.8〜+45.2 ms で、起動の固定した遅延を追加しない。読み込みの約 5.6 秒は、入力と payload の hash 確認を含む。検証完了から領域の読み込みまでは数 ms である。
 
@@ -141,20 +235,20 @@ Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子
 
 時間は中央値 / p95、単位 ms。参照・定義・ハイライトは末尾の `twice`、workspace/symbol は `aecover_ball` を対象にする。
 
-| 文書 | 要求 | .ilean cold | 永続 cold | .ilean warm | 永続 warm |
-|---|---|---:|---:|---:|---:|
-| IntegralEqImproper.lean | 参照 | 39.027 / 39.676 | 39.459 / 39.782 | 20.403 / 22.673 | 12.566 / 12.876 |
-| IntegralEqImproper.lean | ハイライト | 7447.697 / 7466.075 | 7382.636 / 7432.286 | 1.142 / 1.468 | 1.088 / 1.273 |
-| IntegralEqImproper.lean | 定義 | 6683.762 / 6739.912 | 6660.385 / 6712.495 | 20.057 / 21.337 | 13.162 / 13.724 |
-| IntegralEqImproper.lean | workspace/symbol | 38.927 / 39.633 | 39.407 / 39.706 | 842.942 / 865.089 | 702.405 / 719.386 |
-| FiniteDimension.lean | 参照 | 9.122 / 9.179 | 3.557 / 3.696 | 18.709 / 21.232 | 12.583 / 13.859 |
-| FiniteDimension.lean | ハイライト | 10340.156 / 10684.759 | 9408.265 / 9429.901 | 0.720 / 0.911 | 0.731 / 0.894 |
-| FiniteDimension.lean | 定義 | 10102.633 / 10414.280 | 9140.532 / 9170.335 | 19.205 / 20.541 | 13.339 / 14.207 |
-| FiniteDimension.lean | workspace/symbol | 905.518 / 913.419 | 735.866 / 744.116 | 807.098 / 810.961 | 711.212 / 732.751 |
-| Tactic.lean | 参照 | 7.559 / 11.416 | 2.805 / 3.287 | 18.192 / 21.228 | 12.377 / 12.957 |
-| Tactic.lean | ハイライト | 3474.721 / 3577.312 | 2808.056 / 3751.270 | 0.625 / 0.743 | 0.626 / 1.663 |
-| Tactic.lean | 定義 | 3474.667 / 3576.969 | 2807.335 / 3750.197 | 18.781 / 19.409 | 12.750 / 13.209 |
-| Tactic.lean | workspace/symbol | 882.474 / 900.546 | 736.948 / 763.686 | 853.176 / 864.867 | 711.679 / 731.997 |
+| 文書                    | 要求             |           .ilean cold |           永続 cold |       .ilean warm |         永続 warm |
+| ----------------------- | ---------------- | --------------------: | ------------------: | ----------------: | ----------------: |
+| IntegralEqImproper.lean | 参照             |       39.027 / 39.676 |     39.459 / 39.782 |   20.403 / 22.673 |   12.566 / 12.876 |
+| IntegralEqImproper.lean | ハイライト       |   7447.697 / 7466.075 | 7382.636 / 7432.286 |     1.142 / 1.468 |     1.088 / 1.273 |
+| IntegralEqImproper.lean | 定義             |   6683.762 / 6739.912 | 6660.385 / 6712.495 |   20.057 / 21.337 |   13.162 / 13.724 |
+| IntegralEqImproper.lean | workspace/symbol |       38.927 / 39.633 |     39.407 / 39.706 | 842.942 / 865.089 | 702.405 / 719.386 |
+| FiniteDimension.lean    | 参照             |         9.122 / 9.179 |       3.557 / 3.696 |   18.709 / 21.232 |   12.583 / 13.859 |
+| FiniteDimension.lean    | ハイライト       | 10340.156 / 10684.759 | 9408.265 / 9429.901 |     0.720 / 0.911 |     0.731 / 0.894 |
+| FiniteDimension.lean    | 定義             | 10102.633 / 10414.280 | 9140.532 / 9170.335 |   19.205 / 20.541 |   13.339 / 14.207 |
+| FiniteDimension.lean    | workspace/symbol |     905.518 / 913.419 |   735.866 / 744.116 | 807.098 / 810.961 | 711.212 / 732.751 |
+| Tactic.lean             | 参照             |        7.559 / 11.416 |       2.805 / 3.287 |   18.192 / 21.228 |   12.377 / 12.957 |
+| Tactic.lean             | ハイライト       |   3474.721 / 3577.312 | 2808.056 / 3751.270 |     0.625 / 0.743 |     0.626 / 1.663 |
+| Tactic.lean             | 定義             |   3474.667 / 3576.969 | 2807.335 / 3750.197 |   18.781 / 19.409 |   12.750 / 13.209 |
+| Tactic.lean             | workspace/symbol |     882.474 / 900.546 |   736.948 / 763.686 | 853.176 / 864.867 | 711.679 / 731.997 |
 
 第 1 文書の `cold` の参照検索と workspace/symbol は、両方式とも 5 回すべて結果 0 件。短い応答は索引の準備前の部分結果である。準備後は参照 3 件、workspace/symbol 2 件、定義 1 件、ハイライト 3 件で、全 3 文書・全採用セッションの応答本文の hash が上流と一致する。ハイライトの解析完了後の初回構築は `first_after_ready` に分ける。永続化の比較に初回構築と反復を混ぜない。
 
@@ -165,11 +259,11 @@ Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子
 文書を開かず、検証済みの同じ索引を 2 セッションで読み、同じ workspace/symbol の検索後に `/proc/<pid>/smaps` で `snapshot.bin` のマッピングだけを集計する。各条件 5 回、すべて cache hit を確認する。
 
 | 索引ファイルのマッピング | 1 セッション | 2 セッションの合計 |
-|---|---:|---:|
-| RSS MiB | 395.1 | 790.2 |
-| PSS MiB | 395.1 | 395.1 |
-| Shared_Clean MiB | 0.0 | 790.2 |
-| Private_Dirty MiB | 0.0 | 0.0 |
+| ------------------------ | -----------: | -----------------: |
+| RSS MiB                  |        395.1 |              790.2 |
+| PSS MiB                  |        395.1 |              395.1 |
+| Shared_Clean MiB         |          0.0 |              790.2 |
+| Private_Dirty MiB        |          0.0 |                0.0 |
 
 索引の読み込み専用ページは OS が共有し、2 セッション目の索引について 395.1 MiB の重複を省く。1 Watchdog 内の worker 間も同じプロジェクト索引を使う。worker ごとの追加コピーを共有化して減らす余地は、この索引には 0 MiB である。3 文書の worker の解析状態は別の保持データとして扱う。数値で効果を確認できる最小構成として、Lean の永続領域と既存の Watchdog の共有を使う。
 
@@ -177,19 +271,19 @@ Linux の `smaps_rollup` の `Pss` を、サーバーから起動された全子
 
 除外は実行中の外部 CPU、見送りは開始前の外部 CPU が基準を超えた回である。中断は全て 0 回。揃った条件は全て 5 回を採用する。
 
-| シナリオ / 条件 | 採用 | 負荷除外 | 開始前の見送り | 判定 |
-|---|---:|---:|---:|---|
-| 起動 / upstream | 5 | 0 | 0 | 計測済み |
-| 起動 / no-cache | 5 | 0 | 0 | 計測済み |
-| 起動 / baseline | 5 | 0 | 0 | 計測済み |
-| 起動 / no-index | 5 | 0 | 0 | 計測済み |
-| 永続化 / leansail | 5 | 0 | 1 | 計測済み |
-| 永続化 / no-cache | 5 | 1 | 1 | 計測済み |
-| 対照 / upstream | 5 | 0 | 0 | 計測済み |
-| 対照 / no-cache | 5 | 0 | 0 | 計測済み |
-| 対照 / 初回構築の参考 | 3 | 0 | 7 | 未計測 |
-| 対照 / no-index | 5 | 0 | 7 | 計測済み |
-| 同じ索引の 2 セッション共有 | 5 | 0 | 0 | 計測済み |
+| シナリオ / 条件             | 採用 | 負荷除外 | 開始前の見送り | 判定     |
+| --------------------------- | ---: | -------: | -------------: | -------- |
+| 起動 / upstream             |    5 |        0 |              0 | 計測済み |
+| 起動 / no-cache             |    5 |        0 |              0 | 計測済み |
+| 起動 / baseline             |    5 |        0 |              0 | 計測済み |
+| 起動 / no-index             |    5 |        0 |              0 | 計測済み |
+| 永続化 / leansail           |    5 |        0 |              1 | 計測済み |
+| 永続化 / no-cache           |    5 |        1 |              1 | 計測済み |
+| 対照 / upstream             |    5 |        0 |              0 | 計測済み |
+| 対照 / no-cache             |    5 |        0 |              0 | 計測済み |
+| 対照 / 初回構築の参考       |    3 |        0 |              7 | 未計測   |
+| 対照 / no-index             |    5 |        0 |              7 | 計測済み |
+| 同じ索引の 2 セッション共有 |    5 |        0 |              0 | 計測済み |
 
 初回構築の参考は `cache miss` 3 回だけで、5 回の分布としては **未計測**。cache hit の 5 回とは分ける。別に、文書を開かず保存完了を待った準備 1 回は約 58.9 秒で、初回作成の参考値である。保存は索引の準備完了とは別のタスクで行う。短いセッションでの保存完了率と、cache miss の p95 は未計測である。
 

@@ -114,11 +114,21 @@ end, {})
 
 ## Mathlib の計測
 
-起動だけの比較は素の Lean と `.ilean` 方式の Leansail を各 5 回測り、非空診断の中央値は 6.682 秒と 6.688 秒、組ごとの差の中央値は +6.4 ms（bootstrap 95% 区間 −40.0〜+65.5 ms）だった。ハンドラーの追加初期化は 0.022 ms。約 0.57 秒の固定した遅延は再現しない。空の診断通知は両構成とも約 0.30 秒で届く。
+`workspace/symbol` は native Lean で module ごとの定義名と UTF-16 の範囲を準備し、参照索引と一緒に永続化する。検索では準備済みの定義だけを走査し、上流の fuzzy match、整列規則、整列後の先頭 1,000 件の選択を適用する。未保存文書とファイル監視の更新は各要求の参照に反映する。キャッシュの再利用が再計算と等しいことを Lean の `reuseDefinitions_eq` で検査する。
 
-永続索引は `.ilean` 方式との交互の比較で各 5 回を採用した。索引の準備時間は 22.811 秒から 5.617 秒（75.4%）、Watchdog の PSS は 1,169.9 MiB から 456.5 MiB（61.0%）に縮まる。3 文書の全プロセス PSS 中央値は 3,610.7 MiB と 2,937.5 MiB。参照検索・定義・ハイライト・workspace/symbol の解析後の本文は上流と一致する。2 セッションの索引ファイル部分の合計 PSS は、5 回とも 1 セッションと同じ 395.1 MiB で、OS が読み込み専用ページを共有する。キャッシュの入力・版・toolchain・payload の一致は Lean の 5 件の定理で検査し、leanfran で生成する。
+helios の同じ Mathlib v4.35.0 の 3 文書で、参照索引を永続化した改善前 (`cec5cc6`) と、準備済みの定義を含む改善後 (`c7ec746`) を各 5 セッション採用した。以下は `aecover_ball` の warm の中央値 / p95（ms）、各セル 10 標本である。
 
-起動の 4 条件は採用各 5・負荷除外 0・見送り 0。永続化の比較は `.ilean` が採用 5・負荷除外 1・見送り 1、永続索引が採用 5・負荷除外 0・見送り 1。共有は 5 回採用、除外・見送り 0。初回キャッシュ作成の分布は 3/5 回で未計測。各ファイルの cold / warm の表、段階時刻、上限の評価と全ての回数は [起動とプロジェクト索引](docs/mathlib-benchmark.md#起動とプロジェクト索引) を参照する。
+| 文書                    |       改善前 warm |     改善後 warm | 短縮率 |
+| ----------------------- | ----------------: | --------------: | -----: |
+| IntegralEqImproper.lean | 707.883 / 714.545 | 80.736 / 82.852 |  88.6% |
+| FiniteDimension.lean    | 706.462 / 717.417 | 82.328 / 83.472 |  88.3% |
+| Tactic.lean             | 708.878 / 721.304 | 82.751 / 86.187 |  88.3% |
+
+採用 / 負荷除外 / 開始前の見送りは、素の Lean 5 / 0 / 1、改善前 5 / 1 / 1、改善後 5 / 1 / 0。中断は全条件 0 回。外部 CPU の上限は 0.75 cores で、改善前後とも cache hit を確認する。返却件数・順序・内容は全 3 文書・全採用回で上流と一致する。
+
+索引の準備時間の中央値は 5.668 → 5.762 秒、3 文書解析後の Watchdog PSS 中央値は 457.1 → 484.0 MiB、全プロセス PSS 中央値は 2940.7 → 2967.8 MiB。payload は 396.8 → 420.7 MiB で、検索用データの保持量も含む。
+
+段階計測も改善前後を各 5 回採用し、名前の変換と全参照の走査が主な費用であることを確認する。改善は Lean 側の定義の準備と再利用で行う。[段階の内訳・cold と初回・全標本・再現手順](docs/mathlib-benchmark.md#workspacesymbol-の検索) を参照する。起動、参照索引の永続化、セッション間の共有の比較条件と標本も同資料が持つ。
 
 ### 文書索引と semantic tokens
 
@@ -153,7 +163,7 @@ nix develop --command make check
 nix build
 ```
 
-`make check` は native backend と Rust host のビルド、format、Clippy、leanfran の定理 21 件と native backend の同値性の定理 4 件、Rust の単体テスト 9 件、capability の通信テスト 5 ケース、既存の 11 種類の要求と編集・UTF-16・複数ファイルの回帰検査を実行する。semantic tokens は同一版の再要求、編集、再オープン、部分応答から完了後への移行を上流と比較する。`make check-acceptance` では、同じ Lean 4.35.0 の `lean --server` と Leansail を起動し、上流の全 59 protocol entry、キャンセル、編集後の旧要求、実際のプロセスを kill する障害検査を実行する。`make check-editors` の実エディタ検査も含め、CI の `make check` で実行する。
+`make check` は native backend と Rust host のビルド、format、Clippy、leanfran の定理 21 件と native backend の同値性の定理 5 件、Rust の単体テスト 9 件、capability の通信テスト 5 ケース、既存の 11 種類の要求と編集・UTF-16・複数ファイルの回帰検査を実行する。semantic tokens は同一版の再要求、編集、再オープン、部分応答から完了後への移行を上流と比較する。`make check-acceptance` では、同じ Lean 4.35.0 の `lean --server` と Leansail を起動し、上流の全 59 protocol entry、キャンセル、編集後の旧要求、実際のプロセスを kill する障害検査を実行する。`make check-editors` の実エディタ検査も含め、CI の `make check` で実行する。
 
 ### 実エディタの比較検証
 

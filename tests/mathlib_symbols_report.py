@@ -7,7 +7,10 @@ from mathlib import FILES, stats
 from mathlib_startup_report import summarize
 
 
-def profile(source):
+def profile(source, label):
+    sessions = [s for s in source["sessions"] if s["server"] == label]
+    skips = [s for s in source["preflight_skips"] if s["server"] == label]
+    interrupted = [s for s in source["interrupted_sessions"] if s["server"] == label]
     steps = [
         "symbol_start",
         "symbol_modules",
@@ -20,13 +23,11 @@ def profile(source):
         "reference_compress",
         "reference_sent",
     ]
-    if any(
-        e["event"] == "symbol_prepared" for s in source["sessions"] for e in s["events"]
-    ):
+    if any(e["event"] == "symbol_prepared" for s in sessions for e in s["events"]):
         steps[2:4] = ["symbol_prepared"]
     samples = []
     records = []
-    for session in source["sessions"]:
+    for session in sessions:
         if not session["accepted"]:
             continue
         groups = []
@@ -65,15 +66,29 @@ def profile(source):
                         "details": {e["event"]: e.get("detail", "") for e in group},
                     }
                 )
-    assert samples, "採用済みの段階標本が必要です"
     return {
+        "status": "計測済み"
+        if sum(s["accepted"] for s in sessions) >= source["repetitions"]
+        else "未計測",
+        "attempts": [
+            {
+                "repetition": s["repetition"],
+                "accepted": s["accepted"],
+                "outside_cpu_cores": s["resources"]["outside_cpu_cores"],
+            }
+            for s in sessions
+        ],
+        "preflight_skips": skips,
+        "interrupted_sessions": interrupted,
         "counts": {
-            "accepted": sum(s["accepted"] for s in source["sessions"]),
-            "rejected": sum(not s["accepted"] for s in source["sessions"]),
-            "preflight_skips": len(source["preflight_skips"]),
-            "interrupted": len(source["interrupted_sessions"]),
+            "accepted": sum(s["accepted"] for s in sessions),
+            "rejected": sum(not s["accepted"] for s in sessions),
+            "preflight_skips": len(skips),
+            "interrupted": len(interrupted),
         },
-        "stages": {name: stats([s[name] for s in samples]) for name in samples[0]},
+        "stages": {name: stats([s[name] for s in samples]) for name in samples[0]}
+        if samples
+        else {},
         "samples": records,
     }
 
@@ -83,8 +98,7 @@ def main():
         description="workspace/symbol の比較・段階計測を集計する"
     )
     parser.add_argument("measurement", type=Path)
-    parser.add_argument("--profile-before", type=Path)
-    parser.add_argument("--profile-after", type=Path)
+    parser.add_argument("--profile", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     source = json.loads(args.measurement.read_text())
@@ -94,6 +108,10 @@ def main():
         {s["server"] for s in source["sessions"]}
         | {s["server"] for s in source["preflight_skips"]}
     )
+    for session in source["sessions"]:
+        assert session["accepted"] == (
+            session["resources"]["outside_cpu_cores"] <= source["max_outside_cores"]
+        )
     series = {label: summarize(source, label) for label in labels}
     result = {
         "configuration": {
@@ -148,15 +166,31 @@ def main():
                 )
             result["upstream_equal"][relative][method] = hashes
     result["profiles"] = {}
-    for name, path in [("before", args.profile_before), ("after", args.profile_after)]:
-        if path:
-            data = json.loads(path.read_text())
-            assert data["machine"] == source["machine"]
-            assert data["mathlib_revision"] == source["mathlib_revision"]
-            assert data["lean_git_hash"] == source["lean_git_hash"]
+    if args.profile:
+        data = json.loads(args.profile.read_text())
+        assert data["symbol_profile"]
+        assert data["max_outside_cores"] == source["max_outside_cores"]
+        assert data["repetitions"] >= 5
+        assert data["machine"] == source["machine"]
+        assert data["mathlib_revision"] == source["mathlib_revision"]
+        assert data["lean_git_hash"] == source["lean_git_hash"]
+        for session in data["sessions"]:
+            if session["accepted"]:
+                for entry in session["files"]:
+                    for method, value in entry["warm"].items():
+                        assert (
+                            value["sha256"]
+                            in result["upstream_equal"][entry["path"]][method][
+                                "upstream"
+                            ]
+                        )
+        for name, label, hash_key in [
+            ("before", "before", "before_backend_sha256"),
+            ("after", "leansail", "backend_sha256"),
+        ]:
             result["profiles"][name] = {
-                "backend_sha256": data["backend_sha256"],
-                **profile(data),
+                "backend_sha256": data[hash_key],
+                **profile(data, label),
             }
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     for label, entry in series.items():

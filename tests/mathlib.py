@@ -140,6 +140,7 @@ def outside_cpu(before, after, exclude, seconds):
 class Monitor:
     def __init__(self, pid, pss=False):
         self.pid = pid
+        self.roots = (pid,)
         self.pss = pss
         self.stop = threading.Event()
         self.peaks = {}
@@ -164,7 +165,7 @@ class Monitor:
         before = self.before
         while not self.stop.wait(0.1):
             table = processes()
-            owned = descendants(table, self.pid)
+            owned = set().union(*(descendants(table, pid) for pid in self.roots))
             self.outside_ticks += sum(
                 max(0, p["ticks"] - before[pid]["ticks"])
                 for pid, p in table.items()
@@ -503,12 +504,21 @@ def main(session_runner=session, backend_builder=build_backend):
     parser.add_argument("--before-backend", type=Path)
     parser.add_argument("--index-cache-dir", type=Path)
     parser.add_argument("--startup-only", action="store_true")
+    parser.add_argument("--require-cache-hit", action="store_true")
     args = parser.parse_args()
+    if (
+        session_runner.__name__ == "startup_session"
+        and not args.startup_only
+        and args.samples < 2
+    ):
+        parser.error("索引の比較は初回と反復を分けるため --samples 2 以上が必要です")
     if session_runner != session and (args.profile or args.perf):
         parser.error("追加のシナリオは通常計測として実行してください")
     args.workspace = args.workspace.resolve()
     args.output = args.output.resolve()
     args.host = args.host.resolve()
+    if args.index_cache_dir:
+        args.index_cache_dir = args.index_cache_dir.resolve()
     if args.before_backend:
         args.before_backend = args.before_backend.resolve()
     if args.server and "before" in args.server and not args.before_backend:

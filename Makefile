@@ -51,3 +51,8 @@ bench-mathlib-startup:
 bench-mathlib-index:
 	cargo build --release -j 4
 	python3 tests/mathlib_startup.py $(BENCH_ARGS)
+
+.PHONY: bench-mathlib-index-prime
+bench-mathlib-index-prime:
+	cargo build --release -j 4
+	python3 tests/mathlib_index_prime.py $(BENCH_ARGS)

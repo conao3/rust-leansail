@@ -2,6 +2,7 @@ import argparse
 import json
 import random
 import statistics
+from collections import Counter
 from pathlib import Path
 
 from mathlib import FILES, stats
@@ -55,6 +56,13 @@ def stages(session):
     result["setup_cost"] = duration("setup_start", "setup_done")
     result["imports_cost"] = duration("imports_start", "imports_done")
     result["index_cost"] = duration("index_start", "index_done")
+    result["snapshot_load_cost"] = (
+        duration("cache_checked", "index_done")
+        if any(
+            e["event"] == "index_done" and e.get("detail") == "cache" for e in events
+        )
+        else None
+    )
     result["first_publish"] = first("client_diagnostic")
     result["first_nonempty_publish"] = session["startup_first_diagnostic_ms"]
     return result
@@ -78,6 +86,19 @@ def summarize(source, label):
     }
     if not sessions:
         return result
+    result["index_sources"] = dict(
+        Counter(
+            next(
+                (
+                    e.get("detail", "")
+                    for e in s["events"]
+                    if e["event"] == "index_done"
+                ),
+                "省略" if label == "no-index" else "上流",
+            )
+            for s in sessions
+        )
+    )
     values = [stages(s) for s in sessions]
     result["stages"] = {
         name: stats([v[name] for v in values if v[name] is not None])
@@ -89,7 +110,11 @@ def summarize(source, label):
     ]
     result["memory_pss_mib"] = {}
     result["memory_private_mib"] = {}
+    result["total_pss_mib"] = {}
     for phase in sessions[0]["memory"]:
+        result["total_pss_mib"][phase] = [
+            sum(p["pss_kib"] for p in s["memory"][phase]) / 1024 for s in sessions
+        ]
         result["memory_pss_mib"][phase] = {}
         result["memory_private_mib"][phase] = {}
         for session in sessions:
@@ -119,6 +144,10 @@ def summarize(source, label):
             continue
         methods = files[0]["cold"]
         result["files"][relative] = {
+            "first_after_ready": {
+                method: stats([f["warm"][method]["samples_ms"][0] for f in files])
+                for method in methods
+            },
             "cold": {
                 method: {
                     **stats([f["cold"][method]["ms"] for f in files]),
@@ -129,7 +158,7 @@ def summarize(source, label):
             "warm": {
                 method: {
                     **stats(
-                        [t for f in files for t in f["warm"][method]["samples_ms"]]
+                        [t for f in files for t in f["warm"][method]["samples_ms"][1:]]
                     ),
                     "counts": [f["warm"][method]["count"] for f in files],
                     "response_hashes": sorted(
@@ -142,12 +171,12 @@ def summarize(source, label):
     return result
 
 
-def paired(source, baseline, candidate):
+def paired(source, baseline, candidate, metric="first_nonempty_publish"):
     def selected(label):
         return {
-            s["repetition"]: s["startup_first_diagnostic_ms"]
+            s["repetition"]: stages(s)[metric]
             for s in source["sessions"]
-            if s["server"] == label and s["accepted"]
+            if s["server"] == label and s["accepted"] and stages(s)[metric] is not None
         }
 
     a, b = selected(baseline), selected(candidate)
@@ -166,6 +195,67 @@ def paired(source, baseline, candidate):
     }
 
 
+def summarize_memory(source):
+    sessions = [s for s in source["sessions"] if s["accepted"]]
+    result = {
+        "accepted": len(sessions),
+        "rejected": len(source["sessions"]) - len(sessions),
+        "preflight_skips": len(source["preflight_skips"]),
+        "interrupted": len(source["interrupted_sessions"]),
+        "status": "計測済み" if len(sessions) == source["repetitions"] else "未計測",
+        "samples": [],
+    }
+    for session in sessions:
+        values = []
+        for snap in session["snapshots"]:
+            values.append(
+                {
+                    "sessions": snap["sessions"],
+                    "pss_mib": sum(p["pss_kib"] for p in snap["processes"]) / 1024,
+                    "private_clean_mib": sum(
+                        p["private_clean_kib"] for p in snap["processes"]
+                    )
+                    / 1024,
+                    "private_dirty_mib": sum(
+                        p["private_dirty_kib"] for p in snap["processes"]
+                    )
+                    / 1024,
+                    "shared_clean_mib": sum(
+                        p["shared_clean_kib"] for p in snap["processes"]
+                    )
+                    / 1024,
+                    "shared_dirty_mib": sum(
+                        p["shared_dirty_kib"] for p in snap["processes"]
+                    )
+                    / 1024,
+                }
+            )
+            if all("index_mapping_kib" in p for p in snap["processes"]):
+                values[-1]["index_mapping_mib"] = {
+                    field: sum(
+                        p["index_mapping_kib"].get(field, 0) for p in snap["processes"]
+                    )
+                    / 1024
+                    for field in [
+                        "Rss",
+                        "Pss",
+                        "Private_Clean",
+                        "Private_Dirty",
+                        "Shared_Clean",
+                        "Shared_Dirty",
+                    ]
+                }
+        result["samples"].append(
+            {
+                "repetition": session["repetition"],
+                "snapshots": values,
+                "shared_saving_mib": 2 * values[0]["pss_mib"] - values[1]["pss_mib"],
+                "outside_cpu_cores": session["resources"]["outside_cpu_cores"],
+            }
+        )
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description="起動と索引の標本の集計")
     parser.add_argument(
@@ -174,14 +264,38 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     result = {}
+    configuration = None
+    all_responses = {}
     for name, path in args.input:
         source = json.loads(Path(path).read_text())
+        common = {
+            key: source[key]
+            for key in [
+                "mathlib_revision",
+                "lean_git_hash",
+                "machine",
+                "cpu_count",
+                "host_sha256",
+                "backend_sha256",
+                "max_outside_cores",
+            ]
+        }
+        if configuration is None:
+            configuration = common
+        else:
+            assert common == configuration, (
+                "集計するホスト・toolchain・実行ファイル・負荷基準が一致しません"
+            )
+        if source["scenario"].endswith(".memory_session"):
+            result[name] = {"memory_sharing": summarize_memory(source)}
+            continue
         labels = list(
             dict.fromkeys(
                 [s["server"] for s in source["sessions"]]
                 + [s["server"] for s in source["preflight_skips"]]
             )
         )
+        baseline = "upstream" if "upstream" in labels else "no-cache"
         result[name] = {
             "configuration": {
                 key: source[key]
@@ -199,10 +313,16 @@ def main():
                 ]
             },
             "series": {label: summarize(source, label) for label in labels},
+            "paired_baseline": baseline,
             "paired_startup": {
-                label: paired(source, "upstream", label)
+                label: paired(source, baseline, label)
                 for label in labels
-                if label != "upstream"
+                if label != baseline
+            },
+            "paired_index_ready": {
+                label: paired(source, baseline, label, "index_done")
+                for label in labels
+                if label != baseline
             },
         }
         if not source["startup_only"]:
@@ -220,16 +340,28 @@ def main():
                         methods.setdefault(method, set()).update(
                             data["response_hashes"]
                         )
+                        all_responses.setdefault((relative, method), set()).update(
+                            data["response_hashes"]
+                        )
                 assert all(len(hashes) == 1 for hashes in methods.values()), (
                     relative,
                     methods,
                 )
+    assert all(len(hashes) == 1 for hashes in all_responses.values()), (
+        "シナリオ間の解析後の応答が一致しません"
+    )
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(
         json.dumps(
             {
                 name: {
                     label: value["counts"] for label, value in data["series"].items()
+                }
+                if "series" in data
+                else {
+                    key: value
+                    for key, value in data["memory_sharing"].items()
+                    if key != "samples"
                 }
                 for name, data in result.items()
             },

@@ -52,6 +52,10 @@ def snapshot(root):
                         int(fields[key].split()[0])
                         for key in ["Private_Clean", "Private_Dirty"]
                     ),
+                    "private_clean_kib": int(fields["Private_Clean"].split()[0]),
+                    "private_dirty_kib": int(fields["Private_Dirty"].split()[0]),
+                    "shared_clean_kib": int(fields["Shared_Clean"].split()[0]),
+                    "shared_dirty_kib": int(fields["Shared_Dirty"].split()[0]),
                     "cpu_ticks": table[pid]["ticks"],
                     "command": Path(f"/proc/{pid}/cmdline")
                     .read_bytes()
@@ -253,6 +257,18 @@ def startup_session(args, label, command, repetition):
             json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         )
     assert not result["resources"]["sampling_error"], result["resources"]
+    result["index_source"] = next(
+        (e.get("detail") for e in result["events"] if e["event"] == "index_done"),
+        None,
+    )
+    if (
+        args.require_cache_hit
+        and label == "leansail"
+        and result["index_source"] != "cache"
+    ):
+        raise RuntimeError(
+            "永続索引の cache hit が必要です。索引の保存完了を確認してください"
+        )
     result["accepted"] = (
         result["resources"]["outside_cpu_cores"] <= args.max_outside_cores
     )

@@ -52,10 +52,7 @@ acceptance, stale-request decisions, cancellation state and scheduling policy.
 Add each policy when the host actually needs it, together with the relevant
 invariants and behavior tests. Keep OS I/O, threads and process control in Rust.
 
-The generated runtime and native Lean runtime own different objects. Messages
-cross the boundary as framed bytes, never as shared Lean object pointers. The
-current leanfran runtime executes Tasks synchronously; the host uses Rust threads
-and calls only pure generated functions on the forwarding thread.
+生成された runtime と native Lean はそれぞれのオブジェクトを所有する。host と backend の間は LSP の frame を転送し、索引の補助プロセスはパスと hash の JSON を受け渡す。native Lean のオブジェクトの解釈と所有は native Lean が担う。leanfran の Task は同期実行されるため、host の並行処理には Rust の thread を使い、転送経路では生成した純粋関数を呼ぶ。
 
 ## プロジェクト索引
 

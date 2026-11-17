@@ -66,7 +66,7 @@
               pkgs.gcc
               pkgs.lean4
               pkgs.gnumake
-              pkgs.python3
+              (pkgs.python3.withPackages (python: [ python.matplotlib ]))
               pkgs.ruff
               pkgs.emacs-nox
               pkgs.neovim

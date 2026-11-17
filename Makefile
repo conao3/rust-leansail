@@ -11,6 +11,7 @@ check: build
 	cargo clippy --all-targets -j 4 -- -D warnings
 	lake -d lean build
 	cargo test -j 4
+	python3 tests/mathlib_upstream_report_test.py
 	python3 tests/index_cache.py
 	python3 tests/workspace_symbols.py
 	python3 tests/completion.py
@@ -58,3 +59,8 @@ bench-mathlib-index:
 bench-mathlib-index-prime:
 	cargo build --release -j 4
 	python3 tests/mathlib_index_prime.py $(BENCH_ARGS)
+
+.PHONY: bench-mathlib-upstream
+bench-mathlib-upstream:
+	cargo build --release -j 4
+	python3 tests/mathlib_upstream.py $(BENCH_ARGS)

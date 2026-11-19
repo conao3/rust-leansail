@@ -1,0 +1,37 @@
+name: Mathlib upstream benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mathlib-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: cachix/install-nix-action@v31.11.5
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/mathlib
+            ~/.elan
+            target/mathlib
+          key: mathlib-${{ runner.os }}-4.35.0-56a005855ea17e0b0958f73ec801ae140b0a1679
+      - run: nix develop --command python3 tests/bench_mathlib_upstream.py --samples 3 --repetitions 2 --output-dir target/ci-results
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: mathlib-upstream-results
+          path: |
+            target/ci-results/
+            target/upstream-entry/*.json
+          if-no-files-found: warn

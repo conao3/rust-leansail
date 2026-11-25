@@ -13,14 +13,14 @@
 </p>
 
 <p align="center">
-  <a href="#install-and-run">Install and run</a> ·
-  <a href="#editor-setup">Editor setup</a> ·
-  <a href="#performance">Performance</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#compatibility-and-testing">Testing</a> ·
-  <a href="#development">Development</a> ·
-  <a href="docs/architecture.md">Architecture</a> ·
-  <a href="https://github.com/conao3/lean-leanfran">leanfran</a> ·
+  <a href="#install-and-run">Install and run</a> |
+  <a href="#editor-setup">Editor setup</a> |
+  <a href="#performance">Performance</a> |
+  <a href="#how-it-works">How it works</a> |
+  <a href="#compatibility-and-testing">Testing</a> |
+  <a href="#development">Development</a> |
+  <a href="docs/architecture.md">Architecture</a> |
+  <a href="https://github.com/conao3/lean-leanfran">leanfran</a> |
   <a href="https://github.com/conao3/rust-lsp-touchstone">lsp-touchstone</a>
 </p>
 

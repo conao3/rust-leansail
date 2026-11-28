@@ -9,13 +9,13 @@ publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
-leanfran = { version = "=0.6.0", default-features = false }
+leanfran = { version = "=0.14.0", default-features = false }
 libc = "0.2"
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.11"
 
 [build-dependencies]
-leanfran-build = "=0.6.0"
+leanfran-build = "=0.14.0"
 
 [profile.dev.package.sha2]
 opt-level = 3

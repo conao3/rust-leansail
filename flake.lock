@@ -386,16 +386,18 @@
         "treefmt-nix": "treefmt-nix_2"
       },
       "locked": {
-        "lastModified": 1794200464,
-        "narHash": "sha256-Q3tW0OeQgrF2RJ7m5YUO8vov2oWlUG7FSAvrtD1g8pA=",
+        "dir": "Rust",
+        "lastModified": 1794478018,
+        "narHash": "sha256-hVMpeJ/d2uGEHsbKnZHi8focK3t5GJKweYnQqlZZAV4=",
         "owner": "conao3",
         "repo": "lean-rs",
-        "rev": "4602d73a661b90df0eb08576c5f9b1dc68d2e18e",
+        "rev": "f916ea9e7e1747281e161255562f1ae8c29601a5",
         "type": "github"
       },
       "original": {
+        "dir": "Rust",
         "owner": "conao3",
-        "ref": "v0.3.0",
+        "ref": "v0.5.0",
         "repo": "lean-rs",
         "type": "github"
       }
@@ -848,17 +850,17 @@
         "treefmt-nix": "treefmt-nix_3"
       },
       "locked": {
-        "lastModified": 1794424874,
-        "narHash": "sha256-cZfG7zmEXfUcuda9SBrdzRKvHJOaI9KB4nX1wjZ6DfA=",
+        "lastModified": 1795637950,
+        "narHash": "sha256-Zt8Qc/Gia1ZKeTQeVlA+ZjJBqYcd2UnwmQOZ8jQXJiI=",
         "owner": "conao3",
         "repo": "rust-lsp-touchstone",
-        "rev": "84764fdb6850811dca2dc02bd9b9540c89ba2e18",
+        "rev": "a061479ac556770b4063644fb1f10f15e12af089",
         "type": "github"
       },
       "original": {
         "owner": "conao3",
         "repo": "rust-lsp-touchstone",
-        "rev": "84764fdb6850811dca2dc02bd9b9540c89ba2e18",
+        "rev": "a061479ac556770b4063644fb1f10f15e12af089",
         "type": "github"
       }
     },
@@ -903,11 +905,11 @@
         "nixpkgs": "nixpkgs_10"
       },
       "locked": {
-        "lastModified": 1791885023,
-        "narHash": "sha256-C3alQ2MEt0zVrUSho5NUDo3jmhbff72++bfwoqT9Omo=",
+        "lastModified": 1795173499,
+        "narHash": "sha256-J8IYl3oEdctyvBgWr+/L01MY5Xm0TU4WXwZDccN5jjk=",
         "owner": "numtide",
         "repo": "treefmt-nix",
-        "rev": "0d6d739a833ba9a9c93034862e4a7b061a062a1c",
+        "rev": "a0a97e31a897a3537eea5c49df4f8adaa83b3b37",
         "type": "github"
       },
       "original": {

@@ -7,7 +7,7 @@
     treefmt-nix.url = "github:numtide/treefmt-nix";
     leanfran.url = "github:conao3/lean-leanfran/420a7dce66dda3cbfd03b884d453cb8de63a0fc6";
     leanfran.inputs.nixpkgs.follows = "nixpkgs";
-    touchstone.url = "github:conao3/rust-lsp-touchstone/84764fdb6850811dca2dc02bd9b9540c89ba2e18";
+    touchstone.url = "github:conao3/rust-lsp-touchstone/a061479ac556770b4063644fb1f10f15e12af089";
     touchstone.inputs.nixpkgs.follows = "nixpkgs";
   };
 
